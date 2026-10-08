@@ -22,6 +22,7 @@ VML = '''<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-micro
  </v:shapetype>
  <v:shape id="_x0000_s{shapeid}" type="#_x0000_t201" style='position:absolute;margin-left:{left}pt;margin-top:0;width:{wpt}pt;height:30pt;z-index:1;mso-wrap-style:tight' o:button="t" fillcolor="buttonFace [67]" strokecolor="windowText [64]" o:insetmode="auto">
   <v:fill color2="buttonFace [67]" o:detectmouseclick="t"/>
+  <o:lock v:ext="edit" rotation="t"/>
   <v:textbox style='mso-direction-alt:auto' o:singleclick="f">
    <div style='text-align:center'><font face="Calibri" size="220" color="#000000">Remplir</font></div>
   </v:textbox>
@@ -36,22 +37,12 @@ VML = '''<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-micro
  </v:shape>
 </xml>'''
 
-CTRL = ('<legacyDrawing r:id="rIdVml"/>'
-        '<controls><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">'
-        '<mc:Choice Requires="x14"><control shapeId="{shapeid}" r:id="rIdCtrl" name="Button 1">'
-        '<controlPr defaultSize="0" print="0" autoFill="0" autoPict="0" macro="[0]!{macro}">'
-        '<anchor moveWithCells="1" sizeWithCells="1">'
-        '<from><xdr:col>{col}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></from>'
-        '<to><xdr:col>{col}</xdr:col><xdr:colOff>{wemu}</xdr:colOff><xdr:row>2</xdr:row><xdr:rowOff>0</xdr:rowOff></to>'
-        '</anchor></controlPr></control></mc:Choice></mc:AlternateContent></controls>')
-
-CTRLPROP = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-            '<formControlPr xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" objectType="Button" lockText="1"/>')
+# Comme XlsxWriter : seulement le dessin VML herite (pas de bloc <controls>, qu'Excel rejette ici)
+CTRL = '<legacyDrawing r:id="rIdVml"/>'
 
 SHEET_RELS = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
               '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
               '<Relationship Id="rIdVml" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing{n}.vml"/>'
-              '<Relationship Id="rIdCtrl" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/ctrlProp" Target="../ctrlProps/ctrlProp{n}.xml"/>'
               '</Relationships>')
 
 zin = zipfile.ZipFile(xlsx_in)
@@ -87,20 +78,17 @@ for n, (sheet, macro, col, wpx, left) in enumerate(BUTTONS, start=1):
     root_m = re.search(r"<worksheet[^>]*>", xml)
     root = root_m.group(0)
     new_root = root
-    for prefix, uri in (("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships"),
-                        ("xdr", "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing")):
+    for prefix, uri in (("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships"),):
         if f"xmlns:{prefix}=" not in root:
             new_root = new_root[:-1] + f' xmlns:{prefix}="{uri}">'
     xml = xml.replace(root, new_root, 1)
     assert "<legacyDrawing" not in xml and "<tableParts" not in xml and "<extLst" not in xml
     shapeid = 1024 * n + 1
-    xml = xml.replace("</worksheet>", CTRL.format(shapeid=shapeid, macro=macro, col=col, wemu=wpx * EMU_PX) + "</worksheet>")
+    xml = xml.replace("</worksheet>", CTRL + "</worksheet>")
     parts[f] = xml.encode("utf-8")
     base = f.rsplit("/", 1)[1]
     parts[f"xl/worksheets/_rels/{base}.rels"] = SHEET_RELS.format(n=n).encode("utf-8")
     parts[f"xl/drawings/vmlDrawing{n}.vml"] = VML.format(idmap=n, shapeid=shapeid, left=left, wpt=wpx * 0.75, col=col, wpx=wpx, macro=macro).encode("utf-8")
-    parts[f"xl/ctrlProps/ctrlProp{n}.xml"] = CTRLPROP.encode("utf-8")
-    ct = ct.replace("</Types>", f'<Override PartName="/xl/ctrlProps/ctrlProp{n}.xml" ContentType="application/vnd.ms-excel.controlproperties+xml"/></Types>')
 parts["[Content_Types].xml"] = ct.encode("utf-8")
 
 order = ["[Content_Types].xml", "_rels/.rels"] + [n for n in parts if n not in ("[Content_Types].xml", "_rels/.rels")]
