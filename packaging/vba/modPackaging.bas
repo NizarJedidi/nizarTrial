@@ -6,7 +6,7 @@ Option Explicit
 '  Feuilles utilisees :
 '    - Produits             : SKU, Produit, Par Saison?, Couchable?, sub_Item_1..3 (+quantite, Longueur, Largeur, Hauteur)
 '    - Caisses              : Nom de Caisse, Saison, Longueur, Largeur, Hauteur
-'    - Packaging Calculator : Marge vide All Seasons / Marge vide Summer + table Item / Quantity / ...
+'    - Packaging Calculator : Marge vide All Seasons / Marge vide Summer / Jeu de securite (cm) + table Item / Quantity / ...
 '    - Mixed Pack Helper    : Produit1 / Quantite1 ... Produit5 / Quantite5 -> Suggested ... (une commande par ligne)
 '  Macros a lancer :
 '    - Packaging_Setup              : cree les feuilles / en-tetes / boutons "Remplir" (a lancer 1 fois)
@@ -14,7 +14,8 @@ Option Explicit
 '    - RemplirMixedPackHelper       : bouton de la feuille Mixed Pack Helper
 '  Algorithme :
 '    - Chaque produit est decompose en sous-articles (boites) avec dimensions.
-'    - Hauteur utilisable d'une caisse = Hauteur x (1 - marge vide)  (la marge est en haut).
+'    - Hauteur utilisable d'une caisse = Hauteur x (1 - marge vide)  (la marge est en haut),
+'      puis un jeu de securite (cm, cellule de Packaging Calculator) est retranche des 3 dimensions.
 '    - Placement 3D "espaces maximaux" (pas de debordement, 6 orientations possibles),
 '      plusieurs strategies essayees, la meilleure est retenue. Un article 'Couchable? = Non'
 '      reste debout (rotation a plat uniquement).
@@ -92,6 +93,9 @@ Private mProd() As TProduct
 Private mNProd As Long
 Private mCaisses() As TCaisse
 Private mNCaisses As Long
+
+' ---- jeu de securite (cm) retranche des 3 dimensions utiles de chaque caisse ----
+Private mClearance As Double
 
 ' ---- ordres de tri des articles (calcules une fois par commande) ----
 Private mOrdVol() As Long
@@ -237,11 +241,12 @@ Public Sub Packaging_Setup()
     If Len(CStr(ws.Range("A1").Value)) = 0 Then
         ws.Range("A1").Value = "Marge vide All Seasons": ws.Range("B1").Value = 0.05
         ws.Range("A2").Value = "Marge vide Summer": ws.Range("B2").Value = 0.2
+        ws.Range("A3").Value = "Jeu de securite (cm)": ws.Range("B3").Value = 0.5
         ws.Range("B1:B2").NumberFormat = "0%"
-        ws.Range("B1:B2").Interior.Color = RGB(255, 255, 204)
+        ws.Range("B1:B3").Interior.Color = RGB(255, 255, 204)
         ws.Range("A4:E4").Value = Array("Item", "Quantity", "Suggested Package All Seasons", "Suggested Package Summer", "Info")
         ws.Range("A4:E4").Font.Bold = True
-        ws.Range("A1:A2").Font.Bold = True
+        ws.Range("A1:A3").Font.Bold = True
         ws.Columns("A:E").ColumnWidth = 28
         ws.Columns("B").ColumnWidth = 12
     End If
@@ -507,9 +512,10 @@ Private Function Suggest(ByRef items() As TItem, ByVal n As Long, ByVal summer A
     End If
     ReDim uL(1 To nc): ReDim uW(1 To nc): ReDim uH(1 To nc): ReDim uV(1 To nc): ReDim ord(1 To nc): ReDim counts(1 To nc)
     For j = 1 To nc
-        uL(j) = mCaisses(cs(j)).L
-        uW(j) = mCaisses(cs(j)).W
-        uH(j) = mCaisses(cs(j)).H * (1 - margin)
+        uL(j) = mCaisses(cs(j)).L - mClearance
+        uW(j) = mCaisses(cs(j)).W - mClearance
+        uH(j) = mCaisses(cs(j)).H * (1 - margin) - mClearance
+        If uL(j) <= 0 Or uW(j) <= 0 Or uH(j) <= 0 Then uL(j) = 0: uW(j) = 0: uH(j) = 0
         uV(j) = uL(j) * uW(j) * uH(j)
         ord(j) = j
     Next j
@@ -784,10 +790,19 @@ End Function
 ' =====================================================================
 
 Private Function ReadMargins(ByVal ws As Worksheet, ByRef mA As Double, ByRef mS As Double) As Boolean
-    Dim rA As Long, rS As Long
+    Dim rA As Long, rS As Long, rJ As Long
     ReadMargins = False
+    mClearance = 0
     rA = FindRowStartingWith(ws, "Marge vide All", 1, 10)
     rS = FindRowStartingWith(ws, "Marge vide Summer", 1, 10)
+    rJ = FindRowStartingWith(ws, "Jeu de s", 1, 10)
+    If rJ > 0 Then
+        If IsNumeric(ws.Cells(rJ, 2).Value) Then mClearance = CDbl(ws.Cells(rJ, 2).Value)
+        If mClearance < 0 Then
+            MsgBox "Le jeu de securite (cm) doit etre positif ou nul.", vbExclamation
+            Exit Function
+        End If
+    End If
     If rA = 0 Or rS = 0 Then
         MsgBox "Cellules 'Marge vide All Seasons' / 'Marge vide Summer' introuvables (colonne A, feuille '" & SHEET_CALC & "'). Lancez Packaging_Setup.", vbExclamation
         Exit Function

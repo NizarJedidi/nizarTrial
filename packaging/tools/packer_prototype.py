@@ -93,11 +93,17 @@ def season_kind(txt):
     t=(txt or "").strip().lower()
     return "summer" if ("summer" in t or "été" in t or "ete" in t) else "all"
 
-def suggest(items, caisses, margin):
+CLEARANCE=0.5   # jeu de sécurité (cm) retranché des 3 dimensions utiles
+
+def suggest(items, caisses, margin, clearance=None):
     """items: liste d'Item (déjà triés vol desc). caisses: filtrées saison. margin: fraction."""
+    if clearance is None: clearance=CLEARANCE
     for it in items: it.done=False
-    remaining=[it for it in items]
-    usable=[(c, c.l, c.w, c.h*(1-margin), c.l*c.w*c.h*(1-margin)) for c in caisses]
+    usable=[]
+    for c in caisses:
+        ul,uw,uh=c.l-clearance,c.w-clearance,c.h*(1-margin)-clearance
+        if min(ul,uw,uh)<=0: ul=uw=uh=0
+        usable.append((c,ul,uw,uh,ul*uw*uh))
     usable.sort(key=lambda u:u[4])
     counts={}
     guard=0

@@ -45,12 +45,15 @@ if "Packaging Calculator" in wb.sheetnames: del wb["Packaging Calculator"]
 ws = wb.create_sheet("Packaging Calculator")
 ws["A1"] = "Marge vide All Seasons"; ws["B1"] = 0.05
 ws["A2"] = "Marge vide Summer";      ws["B2"] = 0.20
-for c in ("A1", "A2"): ws[c].font = bold
-for c in ("B1", "B2"):
-    ws[c].number_format = "0%"; ws[c].fill = inp_fill; ws[c].border = box; ws[c].font = Font(name="Arial", color="0000FF")
+ws["A3"] = "Jeu de sécurité (cm)";   ws["B3"] = 0.5
+for c in ("A1", "A2", "A3"): ws[c].font = bold
+for c in ("B1", "B2", "B3"):
+    ws[c].fill = inp_fill; ws[c].border = box; ws[c].font = Font(name="Arial", color="0000FF")
+ws["B1"].number_format = "0%"; ws["B2"].number_format = "0%"; ws["B3"].number_format = "0.0"
 ws["C1"] = "← % du volume de la caisse laissé vide (marge en haut). Modifiable."
 ws["C2"] = "← plus large en été (gel / conservation). Modifiable."
-ws["C1"].font = Font(name="Arial", italic=True, color="666666"); ws["C2"].font = Font(name="Arial", italic=True, color="666666")
+ws["C3"] = "← cm retranchés aux 3 dimensions utiles de chaque caisse (articles trop justes). Modifiable."
+for c in ("C1", "C2", "C3"): ws[c].font = Font(name="Arial", italic=True, color="666666")
 ws["A4"] = "Item"; ws["B4"] = "Quantity"; ws["C4"] = "Suggested Package All Seasons"; ws["D4"] = "Suggested Package Summer"; ws["E4"] = "Info"
 style_hdr(ws, ["A4", "B4", "C4", "D4", "E4"])
 # lignes d'exemple (SKU de la feuille Produits)
@@ -58,8 +61,9 @@ examples = [("9004", 1), ("9004", 10), ("9124", 3), ("9130", 2), ("9081", 2), ("
 for i, (sku, q) in enumerate(examples, start=5):
     ws.cell(i, 1, sku).font = normal; ws.cell(i, 2, q).font = normal
     for c in range(1, 6): ws.cell(i, c).border = box
-ws["A3"] = "Mode d'emploi : SKU (ou nom exact du produit) en colonne A, quantité en B, puis bouton « Remplir ». C, D, E sont remplies par la macro (format qté:caisse, séparateur « _ »)."
-ws["A3"].font = Font(name="Arial", italic=True, color="666666")
+ws["E1"] = "Mode d'emploi : SKU (ou nom exact du produit) en colonne A, quantité en B, puis bouton « Remplir »."
+ws["E2"] = "C, D, E sont remplies par la macro (format qté:caisse, séparateur « _ »)."
+ws["E1"].font = Font(name="Arial", italic=True, color="666666"); ws["E2"].font = Font(name="Arial", italic=True, color="666666")
 ws.column_dimensions["A"].width = 24; ws.column_dimensions["B"].width = 11
 ws.column_dimensions["C"].width = 36; ws.column_dimensions["D"].width = 36; ws.column_dimensions["E"].width = 60
 ws.freeze_panes = "A5"
