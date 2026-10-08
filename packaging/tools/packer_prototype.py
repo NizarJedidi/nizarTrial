@@ -94,6 +94,7 @@ def season_kind(txt):
     return "summer" if ("summer" in t or "été" in t or "ete" in t) else "all"
 
 CLEARANCE=0.5   # jeu de sécurité (cm) retranché des 3 dimensions utiles
+FORBIDDEN=set()  # caisses interdites de la commande en cours (noms en minuscules)
 
 def suggest(items, caisses, margin, clearance=None):
     """items: liste d'Item (déjà triés vol desc). caisses: filtrées saison. margin: fraction."""
@@ -146,6 +147,7 @@ def load(path):
     ws=wb["Produits"]
     hdr=[str(c.value or "") for c in ws[1]]
     ctip=next((i for i,h in enumerate(hdr) if h.lower().startswith("couchable")),None)
+    cforb=next((i for i,h in enumerate(hdr) if h.lower().startswith("caisses interdites")),None)
     for r in ws.iter_rows(min_row=2,values_only=True):
         if r[0] is None: continue
         sku=str(r[0]).strip()
@@ -158,7 +160,10 @@ def load(path):
             name,q,l,w,h=r[base:base+5]
             if name is None and q is None: continue
             subs.append((name,q,l,w,h))
-        prods[sku]=dict(name=r[2],saison=(r[3] or ""),subs=subs,tip=tip)
+        forb=set()
+        if cforb is not None and r[cforb]:
+            forb={t.strip().lower() for t in str(r[cforb]).replace(",",";").replace("/",";").split(";") if t.strip()}
+        prods[sku]=dict(name=r[2],saison=(r[3] or ""),subs=subs,tip=tip,forb=forb)
     caisses=[]
     ws=wb["Caisses"]
     for i,r in enumerate(ws.iter_rows(min_row=2,values_only=True),start=1):
@@ -169,10 +174,12 @@ def load(path):
 def build_items(prods, lines):
     """lines: [(sku, qty)] -> items, seasonal(bool), err"""
     items=[]; seasonal=False
+    FORBIDDEN.clear()
     for sku,qty in lines:
         p=prods.get(str(sku).strip())
         if p is None: return None,None,f"SKU inconnu: {sku}"
         if str(p["saison"]).strip().lower()=="oui": seasonal=True
+        FORBIDDEN.update(p["forb"])
         for (name,q,l,w,h) in p["subs"]:
             if l is None or w is None or h is None or q is None:
                 return None,None,f"Dimensions manquantes pour SKU {sku}"
@@ -185,8 +192,8 @@ def run_lines(prods,caisses,lines,mA,mS):
     items,seasonal,err=build_items(prods,lines)
     if err: return err,err
     byidx={c.idx:c for c in caisses}
-    allc=[c for c in caisses if season_kind(c.season)=="all"]
-    sumc=[c for c in caisses if season_kind(c.season)=="summer"]
+    allc=[c for c in caisses if season_kind(c.season)=="all" and c.name.strip().lower() not in FORBIDDEN]
+    sumc=[c for c in caisses if season_kind(c.season)=="summer" and c.name.strip().lower() not in FORBIDDEN]
     cA,e=suggest(items,allc,mA); resA=fmt(cA,byidx) if cA else e
     if seasonal:
         cS,e=suggest(items,sumc,mS); resS=fmt(cS,byidx) if cS else e

@@ -4,7 +4,7 @@ Option Explicit
 '  Packaging Engine MMS - suggestion de caisses (All Seasons / Summer)
 '  ---------------------------------------------------------------
 '  Feuilles utilisees :
-'    - Produits             : SKU, Produit, Par Saison?, Couchable?, sub_Item_1..3 (+quantite, Longueur, Largeur, Hauteur)
+'    - Produits             : SKU, Produit, Par Saison?, Couchable?, Caisses interdites, sub_Item_1..3 (+quantite, dimensions)
 '    - Caisses              : Nom de Caisse, Saison, Longueur, Largeur, Hauteur
 '    - Packaging Calculator : Marge vide All Seasons / Marge vide Summer / Jeu de securite (cm) + table Item / Quantity / ...
 '    - Mixed Pack Helper    : Produit1 / Quantite1 ... Produit5 / Quantite5 -> Suggested ... (une commande par ligne)
@@ -18,7 +18,8 @@ Option Explicit
 '      puis un jeu de securite (cm, cellule de Packaging Calculator) est retranche des 3 dimensions.
 '    - Placement 3D "espaces maximaux" (pas de debordement, 6 orientations possibles),
 '      plusieurs strategies essayees, la meilleure est retenue. Un article 'Couchable? = Non'
-'      reste debout (rotation a plat uniquement).
+'      reste debout (rotation a plat uniquement). Les caisses listees dans 'Caisses interdites'
+'      (noms exacts separes par ';') sont exclues pour toute commande contenant ce produit.
 '    - Priorite au minimum de caisses : 1 seule caisse si possible (la plus petite qui convient),
 '      sinon on remplit la caisse qui prend le plus de volume et on recommence avec le reste.
 '    - Format du resultat : "1:Caisse Super Small_2:Caisse V2"  (qte:nom, separateur "_").
@@ -79,6 +80,7 @@ Private Type TProduct
     ProdName As String
     Seasonal As Boolean  ' Par Saison? = Oui
     TipOver As Boolean   ' Couchable? = Oui
+    Forbidden As String  ' Caisses interdites : ";nom1;nom2;" (normalise)
     NSub As Long
     SubName(1 To 3) As String
     SubQty(1 To 3) As Double
@@ -96,6 +98,8 @@ Private mNCaisses As Long
 
 ' ---- jeu de securite (cm) retranche des 3 dimensions utiles de chaque caisse ----
 Private mClearance As Double
+' ---- caisses interdites pour la commande en cours (union des produits), ";nom;nom;" normalise ----
+Private mForbidden As String
 
 ' ---- ordres de tri des articles (calcules une fois par commande) ----
 Private mOrdVol() As Long
@@ -280,13 +284,15 @@ End Sub
 
 Private Sub LoadProducts()
     Dim ws As Worksheet, lastRow As Long, r As Long, k As Long
-    Dim cSku As Long, cName As Long, cSeason As Long, cTip As Long
+    Dim cSku As Long, cName As Long, cSeason As Long, cTip As Long, cForb As Long
+    Dim parts As Variant, q As Long
     Dim cSub(1 To 3) As Long, cQty(1 To 3) As Long, cL(1 To 3) As Long, cW(1 To 3) As Long, cH(1 To 3) As Long
     Dim v As Variant
 
     Set ws = ThisWorkbook.Worksheets(SHEET_PRODUITS)
     cSku = FindCol(ws, 1, "SKU"): cName = FindCol(ws, 1, "Produit"): cSeason = FindCol(ws, 1, "Par Saison")
     cTip = FindCol(ws, 1, "Couchable")
+    cForb = FindCol(ws, 1, "Caisses interdites")
     If cSku = 0 Or cName = 0 Then Err.Raise vbObjectError + 1, , "Feuille Produits : colonnes 'SKU' / 'Produit' introuvables (ligne 1)."
     For k = 1 To 3
         cSub(k) = FindCol(ws, 1, "sub_Item_" & k)
@@ -316,6 +322,16 @@ Private Sub LoadProducts()
                         Case "oui", "yes", "o", "y", "1", "true", "vrai": .TipOver = True
                         Case "non", "no", "n", "0", "false", "faux": .TipOver = False
                     End Select
+                End If
+                .Forbidden = ""
+                If cForb > 0 Then
+                    v = ws.Cells(r, cForb).Value
+                    If IsError(v) Then v = ""
+                    parts = Split(Replace(Replace(CStr(v), ",", ";"), "/", ";"), ";")
+                    For q = LBound(parts) To UBound(parts)
+                        If Len(Trim(parts(q))) > 0 Then .Forbidden = .Forbidden & ";" & NormKey(parts(q))
+                    Next q
+                    If Len(.Forbidden) > 0 Then .Forbidden = .Forbidden & ";"
                 End If
                 .NSub = 0
                 For k = 1 To 3
@@ -400,6 +416,7 @@ Private Function BuildItems(ByRef skus() As String, ByRef qtys() As Double, ByVa
     Dim totVol As Double, names As String
 
     n = 0: seasonal = False: info = "": totVol = 0: tot = 0
+    mForbidden = ""
     ReDim items(1 To 1)
     For i = 1 To nLines
         If qtys(i) <= 0 Then
@@ -412,6 +429,7 @@ Private Function BuildItems(ByRef skus() As String, ByRef qtys() As Double, ByVa
         With mProd(p)
             If .NSub = 0 Then BuildItems = "Aucun sous-article pour " & .ProdName: Exit Function
             If .Seasonal Then seasonal = True
+            If Len(.Forbidden) > 0 Then mForbidden = mForbidden & .Forbidden
             If Len(names) > 0 Then names = names & " ; "
             names = names & qtys(i) & " x " & .ProdName
             For k = 1 To .NSub
@@ -437,6 +455,7 @@ Private Function BuildItems(ByRef skus() As String, ByRef qtys() As Double, ByVa
     If n = 0 Then BuildItems = "Aucun article": Exit Function
     BuildOrders items, n
     info = names & " | " & n & " colis | " & Format(totVol / 1000, "0.0") & " L | Saisonnier: " & IIf(seasonal, "Oui", "Non")
+    If Len(mForbidden) > 0 Then info = info & " | Caisses interdites: " & ForbiddenList()
     BuildItems = ""
 End Function
 
@@ -504,10 +523,12 @@ Private Function Suggest(ByRef items() As TItem, ByVal n As Long, ByVal summer A
     nc = 0
     ReDim cs(1 To mNCaisses)
     For j = 1 To mNCaisses
-        If mCaisses(j).IsSummer = summer Then nc = nc + 1: cs(nc) = j
+        If mCaisses(j).IsSummer = summer Then
+            If Not IsForbidden(mCaisses(j).CaisseName) Then nc = nc + 1: cs(nc) = j
+        End If
     Next j
     If nc = 0 Then
-        Suggest = "Aucune caisse '" & IIf(summer, "Summer season", "All seasons") & "' dans la feuille Caisses"
+        Suggest = "Aucune caisse '" & IIf(summer, "Summer season", "All seasons") & "' disponible (feuille Caisses / caisses interdites)"
         Exit Function
     End If
     ReDim uL(1 To nc): ReDim uW(1 To nc): ReDim uH(1 To nc): ReDim uV(1 To nc): ReDim ord(1 To nc): ReDim counts(1 To nc)
@@ -855,6 +876,30 @@ Private Function Max3(ByVal a As Double, ByVal b As Double, ByVal c As Double) A
     If b > m Then m = b
     If c > m Then m = c
     Max3 = m
+End Function
+
+' la caisse est-elle interdite par un produit de la commande en cours ? (nom exact, casse ignoree)
+Private Function IsForbidden(ByVal caisseName As String) As Boolean
+    If Len(mForbidden) = 0 Then IsForbidden = False: Exit Function
+    IsForbidden = (InStr(1, mForbidden, ";" & NormKey(caisseName) & ";", vbTextCompare) > 0)
+End Function
+
+' liste lisible des caisses interdites de la commande (noms de la feuille Caisses ; "?" si inconnu)
+Private Function ForbiddenList() As String
+    Dim parts As Variant, q As Long, j As Long, res As String, hit As Boolean, seen As String
+    parts = Split(mForbidden, ";")
+    For q = LBound(parts) To UBound(parts)
+        If Len(parts(q)) > 0 And InStr(1, seen, ";" & parts(q) & ";", vbTextCompare) = 0 Then
+            seen = seen & ";" & parts(q) & ";"
+            hit = False
+            For j = 1 To mNCaisses
+                If NormKey(mCaisses(j).CaisseName) = parts(q) Then hit = True: Exit For
+            Next j
+            If Len(res) > 0 Then res = res & ", "
+            res = res & parts(q) & IIf(hit, "", " (inconnue ?)")
+        End If
+    Next q
+    ForbiddenList = res
 End Function
 
 ' cle de comparaison : nombres -> "9004", textes -> minuscules sans espaces superflus
