@@ -7,7 +7,7 @@ Option Explicit
 '    - Produits             : SKU, Produit, Par Saison?, sub_Item_1..3 (+quantite, Longueur, Largeur, Hauteur)
 '    - Caisses              : Nom de Caisse, Saison, Longueur, Largeur, Hauteur
 '    - Packaging Calculator : Marge vide All Seasons / Marge vide Summer + table Item / Quantity / ...
-'    - Mixed Pack Helper    : Order ID / Item / Quantity  ->  Order ID / Suggested ... (par commande)
+'    - Mixed Pack Helper    : Produit1 / Quantite1 ... Produit5 / Quantite5 -> Suggested ... (une commande par ligne)
 '  Macros a lancer :
 '    - Packaging_Setup              : cree les feuilles / en-tetes / boutons "Remplir" (a lancer 1 fois)
 '    - RemplirPackagingCalculator   : bouton de la feuille Packaging Calculator
@@ -30,6 +30,10 @@ Public Const SHEET_MIX As String = "Mixed Pack Helper"
 ' True  : un article peut etre couche sur n'importe quelle face (6 orientations)
 ' False : un article reste debout, seule la rotation a plat est permise (2 orientations)
 Public Const ALLOW_TIP_OVER As Boolean = True
+
+' Mixed Pack Helper : nombre max de produits par ligne et colonne du 1er resultat (K)
+Public Const MIX_MAX_PRODUITS As Long = 5
+Public Const MIX_COL_RESULT As Long = 11
 
 Private Const EPS As Double = 0.000000001
 Private Const BIG_N As Long = 150          ' au-dela, on saute les strategies "best fit" (plus lentes)
@@ -146,83 +150,74 @@ End Sub
 
 Public Sub RemplirMixedPackHelper()
     Dim ws As Worksheet, wsCalc As Worksheet
-    Dim r As Long, lastRow As Long, hdr As Long, outRow As Long
+    Dim r As Long, lastRow As Long, hdr As Long, k As Long, cnt As Long, nRows As Long
     Dim mA As Double, mS As Double
-    Dim nOrders As Long, orderIds() As String, orderFirst() As Long
-    Dim i As Long, k As Long, cnt As Long
     Dim skus() As String, qtys() As Double
     Dim resA As String, resS As String, info As String
     Dim items() As TItem, n As Long, seasonal As Boolean, errMsg As String
-    Dim oid As String
+    Dim vProd As Variant, vQty As Variant, rowEmpty As Boolean
 
     On Error GoTo Fail
     Set ws = ThisWorkbook.Worksheets(SHEET_MIX)
     Set wsCalc = ThisWorkbook.Worksheets(SHEET_CALC)
     If Not ReadMargins(wsCalc, mA, mS) Then Exit Sub
-    hdr = FindRowStartingWith(ws, "Order ID", 1, 30)
+    hdr = FindRowStartingWith(ws, "Produit", 1, 30)
     If hdr = 0 Then
-        MsgBox "En-tete 'Order ID' introuvable en colonne A de la feuille '" & SHEET_MIX & "'. Lancez Packaging_Setup.", vbExclamation
+        MsgBox "En-tete 'Produit1' introuvable en colonne A de la feuille '" & SHEET_MIX & "'. Lancez Packaging_Setup.", vbExclamation
         Exit Sub
     End If
     LoadData
     Application.ScreenUpdating = False
 
-    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
-    ' liste des commandes (ordre d'apparition)
-    nOrders = 0
-    ReDim orderIds(1 To 1): ReDim orderFirst(1 To 1)
-    For r = hdr + 1 To lastRow
-        oid = Trim(CStr(ws.Cells(r, 1).Value))
-        If Len(oid) > 0 Then
-            k = 0
-            For i = 1 To nOrders
-                If StrComp(orderIds(i), oid, vbTextCompare) = 0 Then k = i: Exit For
-            Next i
-            If k = 0 Then
-                nOrders = nOrders + 1
-                ReDim Preserve orderIds(1 To nOrders): ReDim Preserve orderFirst(1 To nOrders)
-                orderIds(nOrders) = oid: orderFirst(nOrders) = r
-            End If
-        End If
-    Next r
+    ' derniere ligne utilisee parmi les colonnes Produit1..Produit5 (A, C, E, G, I)
+    lastRow = hdr
+    For k = 1 To MIX_MAX_PRODUITS
+        r = ws.Cells(ws.Rows.Count, 2 * k - 1).End(xlUp).Row
+        If r > lastRow Then lastRow = r
+    Next k
 
-    ' zone resultats : colonnes E:H a partir de la ligne d'en-tete
-    ws.Range(ws.Cells(hdr + 1, 5), ws.Cells(ws.Rows.Count, 8)).ClearContents
-    outRow = hdr
-    For i = 1 To nOrders
-        Application.StatusBar = "Mixed Pack Helper : commande " & i & " / " & nOrders
-        cnt = 0
+    nRows = 0
+    For r = hdr + 1 To lastRow
+        cnt = 0: rowEmpty = True: errMsg = ""
         ReDim skus(1 To 1): ReDim qtys(1 To 1)
-        For r = hdr + 1 To lastRow
-            If StrComp(Trim(CStr(ws.Cells(r, 1).Value)), orderIds(i), vbTextCompare) = 0 Then
-                If Len(Trim(CStr(ws.Cells(r, 2).Value))) > 0 Then
-                    cnt = cnt + 1
-                    ReDim Preserve skus(1 To cnt): ReDim Preserve qtys(1 To cnt)
-                    skus(cnt) = CStr(ws.Cells(r, 2).Value)
-                    qtys(cnt) = ToQty(ws.Cells(r, 3).Value)
+        For k = 1 To MIX_MAX_PRODUITS
+            vProd = ws.Cells(r, 2 * k - 1).Value
+            vQty = ws.Cells(r, 2 * k).Value
+            If IsError(vProd) Then vProd = ""
+            If Len(Trim(CStr(vProd))) > 0 Then
+                rowEmpty = False
+                cnt = cnt + 1
+                ReDim Preserve skus(1 To cnt): ReDim Preserve qtys(1 To cnt)
+                skus(cnt) = CStr(vProd)
+                If IsError(vQty) Then
+                    qtys(cnt) = -1
+                ElseIf Len(Trim(CStr(vQty))) = 0 Then
+                    qtys(cnt) = 1          ' quantite vide = 1
+                Else
+                    qtys(cnt) = ToQty(vQty)
                 End If
             End If
-        Next r
-        If cnt = 0 Then
-            resA = "Aucun article": resS = resA: info = ""
+        Next k
+        If rowEmpty Then
+            ws.Cells(r, MIX_COL_RESULT).Resize(1, 3).ClearContents
         Else
+            nRows = nRows + 1
+            Application.StatusBar = "Mixed Pack Helper : ligne " & (r - hdr) & " / " & (lastRow - hdr)
             errMsg = BuildItems(skus, qtys, cnt, items, n, seasonal, info)
             If Len(errMsg) > 0 Then
                 resA = errMsg: resS = errMsg
             Else
                 SuggestBoth items, n, seasonal, mA, mS, resA, resS
             End If
+            ws.Cells(r, MIX_COL_RESULT).Value = resA
+            ws.Cells(r, MIX_COL_RESULT + 1).Value = resS
+            ws.Cells(r, MIX_COL_RESULT + 2).Value = info
         End If
-        outRow = outRow + 1
-        ws.Cells(outRow, 5).Value = orderIds(i)
-        ws.Cells(outRow, 6).Value = resA
-        ws.Cells(outRow, 7).Value = resS
-        ws.Cells(outRow, 8).Value = info
-    Next i
-    ws.Columns(5).Resize(, 4).AutoFit
+    Next r
+    ws.Columns(MIX_COL_RESULT).Resize(, 3).AutoFit
     Application.StatusBar = False
     Application.ScreenUpdating = True
-    If nOrders = 0 Then MsgBox "Aucune commande trouvee sous l'en-tete 'Order ID'.", vbInformation
+    If nRows = 0 Then MsgBox "Aucune ligne a traiter sous l'en-tete 'Produit1'.", vbInformation
     Exit Sub
 Fail:
     Application.StatusBar = False
@@ -232,7 +227,7 @@ End Sub
 
 ' Cree / complete les feuilles et ajoute les boutons "Remplir". A lancer une fois.
 Public Sub Packaging_Setup()
-    Dim ws As Worksheet
+    Dim ws As Worksheet, k As Long
 
     Set ws = GetOrCreateSheet(SHEET_CALC)
     If Len(CStr(ws.Range("A1").Value)) = 0 Then
@@ -250,13 +245,17 @@ Public Sub Packaging_Setup()
 
     Set ws = GetOrCreateSheet(SHEET_MIX)
     If Len(CStr(ws.Range("A1").Value)) = 0 Then
-        ws.Range("A1:C1").Value = Array("Order ID", "Item", "Quantity")
-        ws.Range("E1:H1").Value = Array("Order ID", "Suggested Package All Seasons", "Suggested Package Summer", "Info")
-        ws.Range("A1:H1").Font.Bold = True
-        ws.Columns("A:H").ColumnWidth = 18
-        ws.Columns("F:G").ColumnWidth = 32
+        For k = 1 To MIX_MAX_PRODUITS
+            ws.Cells(1, 2 * k - 1).Value = "Produit" & k
+            ws.Cells(1, 2 * k).Value = "Quantite" & k
+        Next k
+        ws.Cells(1, MIX_COL_RESULT).Value = "Suggested Package All Seasons"
+        ws.Cells(1, MIX_COL_RESULT + 1).Value = "Suggested Package Summer"
+        ws.Cells(1, MIX_COL_RESULT + 2).Value = "Info"
+        ws.Rows(1).Font.Bold = True
+        ws.Columns(MIX_COL_RESULT).Resize(, 2).ColumnWidth = 32
     End If
-    AddButton ws, "btnRemplirMix", "Remplir", "RemplirMixedPackHelper", ws.Range("J1:J2")
+    AddButton ws, "btnRemplirMix", "Remplir", "RemplirMixedPackHelper", ws.Cells(1, MIX_COL_RESULT + 3).Resize(2, 1)
 
     MsgBox "Feuilles et boutons 'Remplir' prets.", vbInformation
 End Sub

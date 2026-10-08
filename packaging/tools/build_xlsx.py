@@ -44,17 +44,33 @@ ws.freeze_panes = "A5"
 # ---------- Mixed Pack Helper ----------
 if "Mixed Pack Helper" in wb.sheetnames: del wb["Mixed Pack Helper"]
 ws = wb.create_sheet("Mixed Pack Helper")
-for col, h in zip("ABC", ["Order ID", "Item", "Quantity"]): ws[f"{col}1"] = h
-for col, h in zip("EFGH", ["Order ID", "Suggested Package All Seasons", "Suggested Package Summer", "Info"]): ws[f"{col}1"] = h
-style_hdr(ws, ["A1", "B1", "C1", "E1", "F1", "G1", "H1"])
-rows = [(1001, "9004", 10), (1001, "9130", 2), (1001, "9124", 3), (1002, "9491", 5), (1002, "9004", 1), (1003, "9124", 5), (1003, "9130", 1)]
-for i, (o, s, q) in enumerate(rows, start=2):
-    ws.cell(i, 1, o); ws.cell(i, 2, s); ws.cell(i, 3, q)
-    for c in range(1, 4): ws.cell(i, c).border = box; ws.cell(i, c).font = normal
-ws["J4"] = "Mode d'emploi : une ligne par article de la commande (Order ID, SKU, quantité)."
-ws["J5"] = "Bouton « Remplir » : un résultat par commande en E:H (marges lues dans Packaging Calculator)."
-ws["J4"].font = Font(name="Arial", italic=True, color="666666"); ws["J5"].font = Font(name="Arial", italic=True, color="666666")
-for col, w in zip("ABCDEFGH", [12, 14, 11, 3, 12, 36, 36, 60]): ws.column_dimensions[col].width = w
+hdrs = []
+for k in range(1, 6):
+    hdrs += [f"Produit{k}", f"Quantité{k}"]
+hdrs += ["Suggested Package All Seasons", "Suggested Package Summer", "Info"]
+for c, h in enumerate(hdrs, start=1):
+    ws.cell(1, c, h)
+style_hdr(ws, [f"{get_column_letter(c)}1" for c in range(1, len(hdrs) + 1)])
+# lignes d'exemple : jusqu'à 5 produits (SKU) par commande
+rows = [
+    [("9004", 10), ("9130", 2), ("9124", 3)],
+    [("9491", 5), ("9004", 1)],
+    [("9124", 5), ("9130", 1)],
+    [("9148", 1), ("9263", 2), ("243", 10), ("9055", 4), ("9138", 3)],
+]
+for i, prods in enumerate(rows, start=2):
+    for k, (sku, q) in enumerate(prods):
+        ws.cell(i, 2 * k + 1, sku); ws.cell(i, 2 * k + 2, q)
+    for c in range(1, 11):
+        ws.cell(i, c).border = box; ws.cell(i, c).font = normal
+ws["P4"] = "Mode d'emploi : une commande par ligne, jusqu'à 5 produits (SKU ou nom exact) avec leur quantité (vide = 1)."
+ws["P5"] = "Bouton « Remplir » : résultats en K, L (+ Info en M). Marges lues dans Packaging Calculator."
+ws["P4"].font = Font(name="Arial", italic=True, color="666666"); ws["P5"].font = Font(name="Arial", italic=True, color="666666")
+for k in range(1, 6):
+    ws.column_dimensions[get_column_letter(2 * k - 1)].width = 12
+    ws.column_dimensions[get_column_letter(2 * k)].width = 10
+ws.column_dimensions["K"].width = 36; ws.column_dimensions["L"].width = 36; ws.column_dimensions["M"].width = 60
+ws.column_dimensions["N"].width = 16
 ws.freeze_panes = "A2"
 
 # police Arial sur les nouvelles feuilles (cellules non stylées)

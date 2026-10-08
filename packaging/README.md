@@ -15,9 +15,9 @@ Livrable principal : **`packaging_engine_mms_v2.xlsm`** (classeur d'origine + 2 
 | `Produits` | Inchangée. Chaque produit = jusqu'à 3 sous-articles (`sub_Item_n`, `quantite_n`, dimensions). Colonne `Par Saison?` : `Oui` = emballage Summer en été. |
 | `Caisses` | Inchangée. `Saison` = `All seasons` ou `Summer season`. |
 | `Packaging Calculator` | `B1` Marge vide All Seasons (5 %), `B2` Marge vide Summer (20 %), modifiables. Table `Item / Quantity / Suggested Package All Seasons / Suggested Package Summer / Info` à partir de la ligne 4. Bouton **Remplir**. |
-| `Mixed Pack Helper` | Entrées `Order ID / Item / Quantity` (une ligne par article). Résultats par commande en `E:H`. Bouton **Remplir**. Les marges sont celles de `Packaging Calculator`. |
+| `Mixed Pack Helper` | Une commande par ligne : `Produit1 / Quantité1 / … / Produit5 / Quantité5` (A:J), résultats `Suggested Package All Seasons / Suggested Package Summer / Info` (K:M). Quantité vide = 1. Bouton **Remplir**. Les marges sont celles de `Packaging Calculator`. |
 
-`Item` = SKU (ex. `9004`) ou, à défaut, le nom exact du produit.
+`Item` / `ProduitN` = SKU (ex. `9004`) ou, à défaut, le nom exact du produit (un produit composé de la liste est accepté comme n'importe quel autre).
 
 ## Règles implémentées
 

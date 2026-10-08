@@ -9,7 +9,7 @@ xlsx_in, vba_bin, xlsm_out = sys.argv[1], sys.argv[2], sys.argv[3]
 # boutons : (nom de feuille, macro, colonne (0-based), largeur px, marge gauche pt)
 BUTTONS = [
     ("Packaging Calculator", "RemplirPackagingCalculator", 3, 110, 384.0),
-    ("Mixed Pack Helper", "RemplirMixedPackHelper", 9, 110, 1044.0),
+    ("Mixed Pack Helper", "RemplirMixedPackHelper", 13, 110, 1319.25),
 ]
 EMU_PX = 9525
 
