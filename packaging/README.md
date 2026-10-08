@@ -12,7 +12,7 @@ Livrable principal : **`packaging_engine_mms_v2.xlsm`** (classeur d'origine + 2 
 
 | Feuille | Rôle |
 |---|---|
-| `Produits` | Inchangée. Chaque produit = jusqu'à 3 sous-articles (`sub_Item_n`, `quantite_n`, dimensions). Colonne `Par Saison?` : `Oui` = emballage Summer en été. |
+| `Produits` | Chaque produit = jusqu'à 3 sous-articles (`sub_Item_n`, `quantite_n`, dimensions). `Par Saison?` : `Oui` = emballage Summer en été. **Nouvelle colonne `Couchable?`** : `Non` (défaut) = l'article reste debout, rotation à plat seulement ; `Oui` = il peut être couché sur n'importe quelle face. |
 | `Caisses` | Inchangée. `Saison` = `All seasons` ou `Summer season`. |
 | `Packaging Calculator` | `B1` Marge vide All Seasons (5 %), `B2` Marge vide Summer (20 %), modifiables. Table `Item / Quantity / Suggested Package All Seasons / Suggested Package Summer / Info` à partir de la ligne 4. Bouton **Remplir**. |
 | `Mixed Pack Helper` | Une commande par ligne : `Produit1 / Quantité1 / … / Produit5 / Quantité5` (A:J), résultats `Suggested Package All Seasons / Suggested Package Summer / Info` (K:M). Quantité vide = 1. Bouton **Remplir**. Les marges sont celles de `Packaging Calculator`. |
@@ -22,7 +22,7 @@ Livrable principal : **`packaging_engine_mms_v2.xlsm`** (classeur d'origine + 2 
 ## Règles implémentées
 
 - Hauteur utilisable d'une caisse = `Hauteur × (1 − marge)` (la marge vide est en haut).
-- Placement 3D sans débordement (heuristique « espaces maximaux », 6 orientations possibles par article, plusieurs stratégies essayées, la meilleure retenue). Constante `ALLOW_TIP_OVER` dans le module pour interdire de coucher les articles.
+- Placement 3D sans débordement (heuristique « espaces maximaux », plusieurs stratégies essayées, la meilleure retenue). Orientations : 2 (rotation à plat) si `Couchable? = Non`, 6 si `Oui`. Valeur par défaut quand la cellule est vide : constante `DEFAULT_TIP_OVER` du module (`False`).
 - Priorité au **minimum de caisses** : si tout tient dans une seule caisse, on prend la plus petite qui convient ; sinon on remplit la caisse qui prend le plus de volume, et on recommence avec le reste.
 - All Seasons : uniquement les caisses `All seasons`. Summer : uniquement les caisses `Summer season`, et seulement si le produit (ou au moins un produit de la commande) est `Par Saison? = Oui` ; sinon la colonne Summer reprend le résultat All Seasons.
 - Format du résultat : `1:Caisse Super Small_2:Caisse V2_1:Caisse V3`.

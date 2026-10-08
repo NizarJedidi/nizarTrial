@@ -1,5 +1,6 @@
 """Construit packaging_engine_mms_v2.xlsx : classeur d'origine + feuilles Packaging Calculator et Mixed Pack Helper."""
 import sys, openpyxl
+from copy import copy
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
@@ -16,6 +17,28 @@ def style_hdr(ws, cells):
     for c in cells:
         ws[c].font = bold; ws[c].fill = hdr_fill; ws[c].border = box
         ws[c].alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+# ---------- Produits : colonne Couchable? (Non par défaut) ----------
+wsP = wb["Produits"]
+hdrs = [str(c.value or "") for c in wsP[1]]
+if not any(h.lower().startswith("couchable") for h in hdrs):
+    col = wsP.max_column + 1
+    ref = wsP.cell(1, 1)
+    h = wsP.cell(1, col, "Couchable?")
+    h.font = copy(ref.font); h.fill = copy(ref.fill); h.border = copy(ref.border); h.alignment = copy(ref.alignment)
+    for r in range(2, wsP.max_row + 1):
+        if wsP.cell(r, 1).value is not None:
+            c = wsP.cell(r, col, "Non"); c.font = copy(wsP.cell(r, 4).font); c.border = copy(wsP.cell(r, 4).border); c.fill = inp_fill
+    wsP.column_dimensions[get_column_letter(col)].width = 12
+    if wsP.auto_filter.ref:
+        wsP.auto_filter.ref = f"A1:{get_column_letter(col)}{wsP.max_row}"
+    # validation Oui/Non
+    from openpyxl.worksheet.datavalidation import DataValidation
+    dv = DataValidation(type="list", formula1='"Oui,Non"', allow_blank=True)
+    wsP.add_data_validation(dv); dv.add(f"{get_column_letter(col)}2:{get_column_letter(col)}{wsP.max_row}")
+    cmt = wsP.cell(1, col)
+    from openpyxl.comments import Comment
+    cmt.comment = Comment("Oui = l'article peut être couché sur n'importe quelle face dans la caisse. Non (défaut) = il reste debout, seule la rotation à plat est permise (ex. sachets souples).", "Packaging Engine")
 
 # ---------- Packaging Calculator ----------
 if "Packaging Calculator" in wb.sheetnames: del wb["Packaging Calculator"]

@@ -3,16 +3,16 @@ Usage : python3 packer_prototype.py <classeur.xlsx>"""
 import itertools, time, sys
 import openpyxl
 
-ALLOW_TIP_OVER = True   # autoriser de coucher les articles (6 orientations) ; sinon 2 (rotation à plat)
+DEFAULT_TIP_OVER = False   # valeur par défaut de 'Couchable?' (6 orientations si Oui, sinon 2 : rotation à plat)
 EPS = 1e-9
 
 class Item:
-    __slots__=("l","w","h","vol","ref","done","placed")
-    def __init__(s,l,w,h,ref):
-        s.l,s.w,s.h,s.ref=l,w,h,ref; s.vol=l*w*h; s.done=False; s.placed=False
+    __slots__=("l","w","h","vol","ref","done","placed","tip")
+    def __init__(s,l,w,h,ref,tip=DEFAULT_TIP_OVER):
+        s.l,s.w,s.h,s.ref,s.tip=l,w,h,ref,tip; s.vol=l*w*h; s.done=False; s.placed=False
 
 def orientations(it):
-    if ALLOW_TIP_OVER:
+    if it.tip:
         return [(it.l,it.w,it.h),(it.w,it.l,it.h),(it.l,it.h,it.w),(it.h,it.l,it.w),(it.w,it.h,it.l),(it.h,it.w,it.l)]
     return [(it.l,it.w,it.h),(it.w,it.l,it.h)]
 
@@ -138,16 +138,21 @@ def load(path):
     wb=openpyxl.load_workbook(path,data_only=True)
     prods={}
     ws=wb["Produits"]
+    hdr=[str(c.value or "") for c in ws[1]]
+    ctip=next((i for i,h in enumerate(hdr) if h.lower().startswith("couchable")),None)
     for r in ws.iter_rows(min_row=2,values_only=True):
         if r[0] is None: continue
         sku=str(r[0]).strip()
+        tip=DEFAULT_TIP_OVER
+        if ctip is not None and r[ctip] is not None:
+            tip=str(r[ctip]).strip().lower() in ("oui","yes","o","y","1","true","vrai")
         subs=[]
         for k in range(3):
             base=4+5*k
             name,q,l,w,h=r[base:base+5]
             if name is None and q is None: continue
             subs.append((name,q,l,w,h))
-        prods[sku]=dict(name=r[2],saison=(r[3] or ""),subs=subs)
+        prods[sku]=dict(name=r[2],saison=(r[3] or ""),subs=subs,tip=tip)
     caisses=[]
     ws=wb["Caisses"]
     for i,r in enumerate(ws.iter_rows(min_row=2,values_only=True),start=1):
@@ -166,7 +171,7 @@ def build_items(prods, lines):
             if l is None or w is None or h is None or q is None:
                 return None,None,f"Dimensions manquantes pour SKU {sku}"
             for _ in range(int(q)*int(qty)):
-                items.append(Item(float(l),float(w),float(h),f"{sku}/{name}"))
+                items.append(Item(float(l),float(w),float(h),f"{sku}/{name}",p["tip"]))
     items.sort(key=lambda it:-it.vol)
     return items,seasonal,None
 

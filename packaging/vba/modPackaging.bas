@@ -4,7 +4,7 @@ Option Explicit
 '  Packaging Engine MMS - suggestion de caisses (All Seasons / Summer)
 '  ---------------------------------------------------------------
 '  Feuilles utilisees :
-'    - Produits             : SKU, Produit, Par Saison?, sub_Item_1..3 (+quantite, Longueur, Largeur, Hauteur)
+'    - Produits             : SKU, Produit, Par Saison?, Couchable?, sub_Item_1..3 (+quantite, Longueur, Largeur, Hauteur)
 '    - Caisses              : Nom de Caisse, Saison, Longueur, Largeur, Hauteur
 '    - Packaging Calculator : Marge vide All Seasons / Marge vide Summer + table Item / Quantity / ...
 '    - Mixed Pack Helper    : Produit1 / Quantite1 ... Produit5 / Quantite5 -> Suggested ... (une commande par ligne)
@@ -16,7 +16,8 @@ Option Explicit
 '    - Chaque produit est decompose en sous-articles (boites) avec dimensions.
 '    - Hauteur utilisable d'une caisse = Hauteur x (1 - marge vide)  (la marge est en haut).
 '    - Placement 3D "espaces maximaux" (pas de debordement, 6 orientations possibles),
-'      plusieurs strategies essayees, la meilleure est retenue.
+'      plusieurs strategies essayees, la meilleure est retenue. Un article 'Couchable? = Non'
+'      reste debout (rotation a plat uniquement).
 '    - Priorite au minimum de caisses : 1 seule caisse si possible (la plus petite qui convient),
 '      sinon on remplit la caisse qui prend le plus de volume et on recommence avec le reste.
 '    - Format du resultat : "1:Caisse Super Small_2:Caisse V2"  (qte:nom, separateur "_").
@@ -27,9 +28,10 @@ Public Const SHEET_CAISSES As String = "Caisses"
 Public Const SHEET_CALC As String = "Packaging Calculator"
 Public Const SHEET_MIX As String = "Mixed Pack Helper"
 
-' True  : un article peut etre couche sur n'importe quelle face (6 orientations)
-' False : un article reste debout, seule la rotation a plat est permise (2 orientations)
-Public Const ALLOW_TIP_OVER As Boolean = True
+' Colonne 'Couchable?' de la feuille Produits : Oui = l'article peut etre couche sur n'importe
+' quelle face (6 orientations) ; Non (ou vide, ou colonne absente) = il reste debout, seule la
+' rotation a plat est permise (2 orientations). DEFAULT_TIP_OVER s'applique quand la valeur est vide.
+Public Const DEFAULT_TIP_OVER As Boolean = False
 
 ' Mixed Pack Helper : nombre max de produits par ligne et colonne du 1er resultat (K)
 Public Const MIX_MAX_PRODUITS As Long = 5
@@ -46,6 +48,7 @@ Private Type TItem
     H As Double
     Vol As Double
     MaxDim As Double
+    TipOver As Boolean   ' peut etre couche (6 orientations) ; sinon 2 orientations
     Ref As String
     Done As Boolean      ' deja place dans une caisse validee
     Placed As Boolean    ' place dans la tentative en cours
@@ -74,6 +77,7 @@ Private Type TProduct
     NameKey As String    ' nom produit normalise
     ProdName As String
     Seasonal As Boolean  ' Par Saison? = Oui
+    TipOver As Boolean   ' Couchable? = Oui
     NSub As Long
     SubName(1 To 3) As String
     SubQty(1 To 3) As Double
@@ -271,12 +275,13 @@ End Sub
 
 Private Sub LoadProducts()
     Dim ws As Worksheet, lastRow As Long, r As Long, k As Long
-    Dim cSku As Long, cName As Long, cSeason As Long
+    Dim cSku As Long, cName As Long, cSeason As Long, cTip As Long
     Dim cSub(1 To 3) As Long, cQty(1 To 3) As Long, cL(1 To 3) As Long, cW(1 To 3) As Long, cH(1 To 3) As Long
     Dim v As Variant
 
     Set ws = ThisWorkbook.Worksheets(SHEET_PRODUITS)
     cSku = FindCol(ws, 1, "SKU"): cName = FindCol(ws, 1, "Produit"): cSeason = FindCol(ws, 1, "Par Saison")
+    cTip = FindCol(ws, 1, "Couchable")
     If cSku = 0 Or cName = 0 Then Err.Raise vbObjectError + 1, , "Feuille Produits : colonnes 'SKU' / 'Produit' introuvables (ligne 1)."
     For k = 1 To 3
         cSub(k) = FindCol(ws, 1, "sub_Item_" & k)
@@ -298,6 +303,15 @@ Private Sub LoadProducts()
                 .ProdName = Trim(CStr(ws.Cells(r, cName).Value))
                 .NameKey = NormKey(.ProdName)
                 If cSeason > 0 Then .Seasonal = (LCase(Trim(CStr(ws.Cells(r, cSeason).Value))) = "oui") Else .Seasonal = False
+                .TipOver = DEFAULT_TIP_OVER
+                If cTip > 0 Then
+                    v = ws.Cells(r, cTip).Value
+                    If IsError(v) Then v = ""
+                    Select Case LCase(Trim(CStr(v)))
+                        Case "oui", "yes", "o", "y", "1", "true", "vrai": .TipOver = True
+                        Case "non", "no", "n", "0", "false", "faux": .TipOver = False
+                    End Select
+                End If
                 .NSub = 0
                 For k = 1 To 3
                     If cSub(k) > 0 Then
@@ -407,6 +421,7 @@ Private Function BuildItems(ByRef skus() As String, ByRef qtys() As Double, ByVa
                     items(n).L = .SubL(k): items(n).W = .SubW(k): items(n).H = .SubH(k)
                     items(n).Vol = .SubL(k) * .SubW(k) * .SubH(k)
                     items(n).MaxDim = Max3(.SubL(k), .SubW(k), .SubH(k))
+                    items(n).TipOver = .TipOver
                     items(n).Ref = .ProdName & " / " & .SubName(k)
                     items(n).Done = False: items(n).Placed = False
                     totVol = totVol + items(n).Vol
@@ -632,7 +647,6 @@ Private Function PackOnce(ByRef items() As TItem, ByVal n As Long, ByRef ord() A
     Dim px As Double, py As Double, pz As Double, pl As Double, pw As Double, ph As Double
     Dim sKey As Double, a As Long, b As Long, tmp As TSpace
 
-    If ALLOW_TIP_OVER Then nOr = 6 Else nOr = 2
     ReDim sp(1 To 1): nSp = 1
     sp(1).X = 0: sp(1).Y = 0: sp(1).Z = 0: sp(1).L = boxL: sp(1).W = boxW: sp(1).H = boxH
     allPlaced = True: placedVol = 0
@@ -641,6 +655,7 @@ Private Function PackOnce(ByRef items() As TItem, ByVal n As Long, ByRef ord() A
     For k = 1 To n
         i = ord(k)
         If Not items(i).Done Then
+            If items(i).TipOver Then nOr = 6 Else nOr = 2
             ' ---- choix de l'espace et de l'orientation ----
             found = False: bestS = 0: bestKey = 0
             For s = 1 To nSp
