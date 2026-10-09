@@ -188,6 +188,141 @@ def build_items(prods, lines):
     items.sort(key=lambda it:-it.vol)
     return items,seasonal,None
 
+# ================= moteur "Referentiel Entrepot" (plages min/MAX par caisse) =================
+NEW_TAG=" (New)"
+
+def load_ref(path, caisses):
+    """Feuille 'Référentiel Entrepôt' : {cat: {'skus': set, 'min': {caisse: n}, 'max': {caisse: n|-1}}}"""
+    import re
+    wb=openpyxl.load_workbook(path,data_only=True)
+    if "Référentiel Entrepôt" not in wb.sheetnames: return []
+    ws=wb["Référentiel Entrepôt"]
+    hdr=next(r for r in range(1,11) if str(ws.cell(r,1).value or "").lower().startswith("cat"))
+    names={c.name.strip().lower():c.name for c in caisses}
+    cols={}
+    for c in range(1,ws.max_column+1):
+        v=str(ws.cell(hdr,c).value or "").strip().lower()
+        if v in names:
+            sub=str(ws.cell(hdr+1,c+1).value or "").strip().lower()
+            cols[names[v]]=(c,c+1) if sub.startswith("max") else (c,c)
+    sub_row=any(mx!=mn for mn,mx in cols.values())
+    rows=[]; r=hdr+(2 if sub_row else 1)
+    while r<=ws.max_row:
+        cat=str(ws.cell(r,1).value or "").strip()
+        if not cat:
+            if not str(ws.cell(r+1,1).value or "").strip(): break
+            r+=1; continue
+        if cat.lower().startswith(("lecture","cellules")): break
+        skus={t.strip() for t in str(ws.cell(r,2).value or "").replace(",","|").split("|") if t.strip()}
+        mn={}; mx={}
+        for b,(cmin,cmax) in cols.items():
+            vmax=ws.cell(r,cmax).value; vmin=ws.cell(r,cmin).value
+            if vmax is None or str(vmax).strip().upper()=="X": mx[b]=-1; mn[b]=1; continue
+            if isinstance(vmax,(int,float)): mx[b]=int(vmax); mn[b]=1
+            else:
+                nums=[int(x) for x in re.findall(r"\d+",str(vmax))]
+                if not nums: mx[b]=-1; mn[b]=1; continue
+                mx[b]=nums[-1]; mn[b]=nums[0]+1 if len(nums)>=2 else 1
+            if cmin!=cmax and isinstance(vmin,(int,float)): mn[b]=int(vmin)
+        rows.append(dict(cat=cat,skus=skus,min=mn,max=mx))
+        r+=1
+    return rows
+
+def find_ref(ref, sku):
+    k=str(sku).strip()
+    return next((row for row in ref if k in row["skus"]),None)
+
+def suggest_table(row, q, caisses, summer):
+    cs=[c for c in caisses if (season_kind(c.season)=="summer")==summer and row["max"].get(c.name,-1)>=1]
+    if not cs: return None,f"Aucune caisse {'ete' if summer else 'hiver'} autorisee dans le referentiel pour {row['cat']}"
+    counts={}; rem=q; guard=0
+    while rem>0:
+        guard+=1
+        if guard>200: return None,"Trop de caisses"
+        cand=[c for c in cs if row["min"][c.name]<=rem<=row["max"][c.name]]
+        if cand:
+            c=min(cand,key=lambda c:c.vol); counts[c.idx]=counts.get(c.idx,0)+1; break
+        lower=[c for c in cs if row["max"][c.name]<rem]
+        if lower:
+            c=max(lower,key=lambda c:(row["max"][c.name],-c.vol)); counts[c.idx]=counts.get(c.idx,0)+1; rem-=row["max"][c.name]; continue
+        above=[c for c in cs if row["max"][c.name]>=rem]
+        c=min(above,key=lambda c:(row["min"][c.name],c.vol)); counts[c.idx]=counts.get(c.idx,0)+1; break
+    return counts,None
+
+def suggest_fraction(lines, ref, prods, caisses, summer, margin, geo_cap):
+    """lines: [(sku,q)] regroupees ; geo_cap(sku, caisse, margin) -> capacite geometrique"""
+    cs=[c for c in caisses if (season_kind(c.season)=="summer")==summer]
+    cap={}
+    for sku,q in lines:
+        row=find_ref(ref,sku)
+        for c in cs:
+            cap[(sku,c.name)] = (row["max"][c.name] if row["max"][c.name]>=1 else 0) if row else geo_cap(sku,c,margin)
+        if not any(cap[(sku,c.name)]>=1 for c in cs): return None,f"Aucune caisse {'ete' if summer else 'hiver'} possible pour '{sku}'"
+    capmax={sku:max(cap[(sku,c.name)] for c in cs) for sku,_ in lines}
+    rem={sku:q for sku,q in lines}; counts={}; guard=0
+    while any(v>0 for v in rem.values()):
+        guard+=1
+        if guard>200: return None,"Trop de caisses"
+        single=[c for c in cs if all(cap[(s,c.name)]>=1 for s,v in rem.items() if v>0) and sum(v/cap[(s,c.name)] for s,v in rem.items() if v>0)<=1+EPS]
+        if single:
+            c=min(single,key=lambda c:c.vol); counts[c.idx]=counts.get(c.idx,0)+1; break
+        best=None
+        for c in cs:
+            used=0; placed=0; take={}
+            for s,v in sorted(rem.items(),key=lambda kv:-(kv[1]/cap[(kv[0],c.name)] if cap[(kv[0],c.name)]>=1 else -1)):
+                if v<=0 or cap[(s,c.name)]<1: continue
+                t=min(v,int((1-used)*cap[(s,c.name)]+EPS))
+                if t>0: take[s]=t; used+=t/cap[(s,c.name)]; placed+=t/capmax[s]
+            if placed>EPS and (best is None or placed>best[0]+EPS or (abs(placed-best[0])<=EPS and c.vol<best[1].vol)): best=(placed,c,take)
+        if best is None: return None,"Combinaison impossible (capacites du referentiel)"
+        _,c,take=best; counts[c.idx]=counts.get(c.idx,0)+1
+        for s,t in take.items(): rem[s]-=t
+    return counts,None
+
+def geo_cap(prods, caisses, sku, c, margin, clearance=None):
+    if clearance is None: clearance=CLEARANCE
+    ul,uw,uh=c.l-clearance,c.w-clearance,c.h*(1-margin)-clearance
+    if min(ul,uw,uh)<=0: return 0
+    items,_,err=build_items(prods,[(sku,1)])
+    if err: return 0
+    p=prods[str(sku).strip()]
+    if any(c.name.strip().lower()==f for f in p["forb"]): return 0
+    unit=sum(it.vol for it in items); hi=int(ul*uw*uh//unit)
+    def fits(q):
+        its,_,_=build_items(prods,[(sku,q)])
+        for it in its: it.done=False
+        return pack_best(its,ul,uw,uh)[0]
+    if hi<1 or not fits(1): return 0
+    lo=1
+    while lo<hi:
+        m=(lo+hi+1)//2
+        if fits(m): lo=m
+        else: hi=m-1
+    return lo
+
+def run_lines_ref(prods, caisses, ref, lines, mA, mS):
+    """Moteur complet : referentiel -> fractions -> geometrie ; retourne (resA, resS)."""
+    byidx={c.idx:c for c in caisses}
+    merged={}
+    for sku,q in lines:
+        k=str(sku).strip(); merged[k]=merged.get(k,0)+int(q)
+    lines=list(merged.items())
+    seasonal=any(str(prods[s]["saison"]).strip().lower()=="oui" for s,_ in lines if s in prods)
+    rows=[find_ref(ref,s) for s,_ in lines]
+    def fmt_or_err(res): 
+        cnt,e=res; return fmt(cnt,byidx) if cnt else e
+    if all(rows) and len(lines)==1:
+        a=fmt_or_err(suggest_table(rows[0],lines[0][1],caisses,False))
+        s=fmt_or_err(suggest_table(rows[0],lines[0][1],caisses,True)) if seasonal else a
+        return a,s
+    if not any(rows):
+        a,s=run_lines(prods,caisses,lines,mA,mS)
+        return a+NEW_TAG,(s+NEW_TAG if seasonal else a+NEW_TAG)
+    gc=lambda sku,c,m: geo_cap(prods,caisses,sku,c,m)
+    a=fmt_or_err(suggest_fraction(lines,ref,prods,caisses,False,mA,gc))+NEW_TAG
+    s=(fmt_or_err(suggest_fraction(lines,ref,prods,caisses,True,mS,gc))+NEW_TAG) if seasonal else a
+    return a,s
+
 def run_lines(prods,caisses,lines,mA,mS):
     items,seasonal,err=build_items(prods,lines)
     if err: return err,err

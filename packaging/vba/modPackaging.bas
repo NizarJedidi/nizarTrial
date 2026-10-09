@@ -8,6 +8,11 @@ Option Explicit
 '    - Caisses              : Nom de Caisse, Saison, Longueur, Largeur, Hauteur
 '    - Packaging Calculator : Marge vide All Seasons / Marge vide Summer / Jeu de securite (cm) + table Item / Quantity / ...
 '    - Mixed Pack Helper    : Produit1 / Quantite1 ... Produit5 / Quantite5 -> Suggested ... (une commande par ligne)
+'    - Referentiel Entrepot : par categorie (SKU candidats) et par caisse, plage min / MAX d'articles, X = interdite.
+'                             C'est la source principale : un article reference y est traite par plages de quantite.
+'                             Au-dela du MAX, on remplit la plus grande caisse autorisee et on recommence (combinaison).
+'                             Commande mixte : chaque article consomme q / MAX de la caisse, somme <= 1 -> suffixe "(New)".
+'                             Article hors referentiel : moteur geometrique ci-dessous -> suffixe "(New)".
 '  Macros a lancer :
 '    - Packaging_Setup              : cree les feuilles / en-tetes / boutons "Remplir" (a lancer 1 fois)
 '    - RemplirPackagingCalculator   : bouton de la feuille Packaging Calculator
@@ -29,6 +34,8 @@ Public Const SHEET_PRODUITS As String = "Produits"
 Public Const SHEET_CAISSES As String = "Caisses"
 Public Const SHEET_CALC As String = "Packaging Calculator"
 Public Const SHEET_MIX As String = "Mixed Pack Helper"
+Public Const SHEET_REF As String = "Référentiel Entrepôt"
+Public Const NEW_TAG As String = " (New)"
 
 ' Colonne 'Couchable?' de la feuille Produits : Oui = l'article peut etre couche sur n'importe
 ' quelle face (6 orientations) ; Non (ou vide, ou colonne absente) = il reste debout, seule la
@@ -90,11 +97,22 @@ Private Type TProduct
     SubOK(1 To 3) As Boolean
 End Type
 
+Private Type TRefRow
+    Cat As String
+    Skus As String       ' ";sku;sku;" normalise
+    MinQ() As Long       ' par caisse (index mCaisses) ; MaxQ = -1 : caisse interdite / non renseignee
+    MaxQ() As Long
+End Type
+
 ' ---- donnees chargees ----
 Private mProd() As TProduct
 Private mNProd As Long
 Private mCaisses() As TCaisse
 Private mNCaisses As Long
+Private mRef() As TRefRow
+Private mNRef As Long
+Private mMargeA As Double     ' marges courantes (pour le moteur geometrique de secours)
+Private mMargeS As Double
 
 ' ---- jeu de securite (cm) retranche des 3 dimensions utiles de chaque caisse ----
 Private mClearance As Double
@@ -142,7 +160,7 @@ Public Sub RemplirPackagingCalculator()
             If Len(errMsg) > 0 Then
                 resA = errMsg: resS = errMsg
             Else
-                SuggestBoth items, n, seasonal, mA, mS, resA, resS
+                SuggestBoth skus, qtys, 1, items, n, seasonal, mA, mS, resA, resS, info
             End If
             ws.Cells(r, 3).Value = resA
             ws.Cells(r, 4).Value = resS
@@ -219,7 +237,7 @@ Public Sub RemplirMixedPackHelper()
             If Len(errMsg) > 0 Then
                 resA = errMsg: resS = errMsg
             Else
-                SuggestBoth items, n, seasonal, mA, mS, resA, resS
+                SuggestBoth skus, qtys, cnt, items, n, seasonal, mA, mS, resA, resS, info
             End If
             ws.Cells(r, MIX_COL_RESULT).Value = resA
             ws.Cells(r, MIX_COL_RESULT + 1).Value = resS
@@ -280,7 +298,122 @@ End Sub
 Private Sub LoadData()
     LoadProducts
     LoadCaisses
+    LoadReferentiel
 End Sub
+
+' Feuille Referentiel Entrepot : ligne d'en-tete = "Categorie..." en colonne A, noms de caisses sur cette ligne
+' (cellule fusionnee min/MAX), sous-ligne "min" / "MAX" facultative, puis une ligne par categorie.
+Private Sub LoadReferentiel()
+    Dim ws As Worksheet, hdr As Long, sub_ As Boolean, r As Long, c As Long, lastCol As Long, j As Long
+    Dim colMin() As Long, colMax() As Long, nm As String, k As Long, parts As Variant, q As Long
+    Dim vMin As Variant, vMax As Variant, cSku As Long
+
+    mNRef = 0
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(SHEET_REF)
+    On Error GoTo 0
+    If ws Is Nothing Then Exit Sub
+    hdr = FindRowStartingWith(ws, "Cat", 1, 10)
+    If hdr = 0 Then Exit Sub
+    cSku = FindCol(ws, hdr, "SKU")
+    If cSku = 0 Then cSku = 2
+    ReDim colMin(1 To mNCaisses): ReDim colMax(1 To mNCaisses)
+    lastCol = ws.Cells(hdr, ws.Columns.Count).End(xlToLeft).Column
+    sub_ = False
+    For c = 1 To lastCol
+        nm = NormKey(ws.Cells(hdr, c).Value)
+        If Len(nm) > 0 Then
+            For j = 1 To mNCaisses
+                If NormKey(mCaisses(j).CaisseName) = nm Then
+                    colMin(j) = c: colMax(j) = c
+                    If Left(LCase(Trim(CStr(ws.Cells(hdr + 1, c + 1).Value))), 3) = "max" Then colMax(j) = c + 1: sub_ = True
+                    If Left(LCase(Trim(CStr(ws.Cells(hdr + 1, c).Value))), 3) = "max" Then colMax(j) = c: colMin(j) = c - 1: sub_ = True
+                End If
+            Next j
+        End If
+    Next c
+    r = hdr + 1
+    If sub_ Then r = hdr + 2
+    ReDim mRef(1 To 1)
+    Do While r <= ws.Rows.Count
+        nm = Trim(CStr(ws.Cells(r, 1).Value))
+        If Len(nm) = 0 Then
+            If Len(Trim(CStr(ws.Cells(r + 1, 1).Value))) = 0 Then Exit Do
+        ElseIf Left(LCase(nm), 7) = "lecture" Or Left(LCase(nm), 8) = "cellules" Then
+            Exit Do
+        Else
+            mNRef = mNRef + 1
+            If mNRef > UBound(mRef) Then ReDim Preserve mRef(1 To mNRef * 2)
+            With mRef(mNRef)
+                .Cat = nm
+                .Skus = ";"
+                parts = Split(Replace(CStr(ws.Cells(r, cSku).Value), ",", "|"), "|")
+                For q = LBound(parts) To UBound(parts)
+                    If Len(Trim(parts(q))) > 0 Then .Skus = .Skus & NormKey(parts(q)) & ";"
+                Next q
+                ReDim .MinQ(1 To mNCaisses): ReDim .MaxQ(1 To mNCaisses)
+                For j = 1 To mNCaisses
+                    .MaxQ(j) = -1: .MinQ(j) = 1
+                    If colMax(j) > 0 Then
+                        vMax = ws.Cells(r, colMax(j)).Value
+                        vMin = ws.Cells(r, colMin(j)).Value
+                        ParseRefCell vMin, vMax, .MinQ(j), .MaxQ(j)
+                    End If
+                Next j
+            End With
+        End If
+        r = r + 1
+    Loop
+End Sub
+
+' vMin / vMax : nombres, "X", vide, ou texte ">5 & <12" (-> min 6, max 12)
+Private Sub ParseRefCell(ByVal vMin As Variant, ByVal vMax As Variant, ByRef mn As Long, ByRef mx As Long)
+    Dim cnt As Long, n1 As Long, n2 As Long
+    mn = 1: mx = -1
+    If IsError(vMax) Then Exit Sub
+    If UCase(Trim(CStr(vMax))) = "X" Or Len(Trim(CStr(vMax))) = 0 Then Exit Sub
+    If IsNumeric(vMax) Then
+        mx = CLng(vMax)
+    Else
+        cnt = ParseNumbersInText(CStr(vMax), n1, n2)
+        If cnt = 0 Then Exit Sub
+        If cnt >= 2 Then mn = n1 + 1: mx = n2 Else mx = n1
+    End If
+    If Not IsError(vMin) Then
+        If IsNumeric(vMin) Then
+            If Len(Trim(CStr(vMin))) > 0 Then mn = CLng(vMin)
+        End If
+    End If
+    If mn < 1 Then mn = 1
+    If mx < 1 Then mx = -1
+End Sub
+
+' premier et dernier nombre entier d'un texte ; retourne le nombre de nombres trouves
+Private Function ParseNumbersInText(ByVal s As String, ByRef first As Long, ByRef last As Long) As Long
+    Dim i As Long, cur As String, ch As String, cnt As Long
+    cnt = 0: cur = ""
+    For i = 1 To Len(s) + 1
+        If i <= Len(s) Then ch = Mid(s, i, 1) Else ch = " "
+        If ch >= "0" And ch <= "9" Then
+            cur = cur & ch
+        ElseIf Len(cur) > 0 Then
+            cnt = cnt + 1
+            If cnt = 1 Then first = CLng(cur)
+            last = CLng(cur)
+            cur = ""
+        End If
+    Next i
+    ParseNumbersInText = cnt
+End Function
+
+Private Function FindRefRow(ByVal sku As String) As Long
+    Dim i As Long, k As String
+    k = ";" & NormKey(sku) & ";"
+    For i = 1 To mNRef
+        If InStr(1, mRef(i).Skus, k, vbTextCompare) > 0 Then FindRefRow = i: Exit Function
+    Next i
+    FindRefRow = 0
+End Function
 
 Private Sub LoadProducts()
     Dim ws As Worksheet, lastRow As Long, r As Long, k As Long
@@ -434,6 +567,7 @@ Private Function BuildItems(ByRef skus() As String, ByRef qtys() As Double, ByVa
             names = names & qtys(i) & " x " & .ProdName
             For k = 1 To .NSub
                 If Not .SubOK(k) Then
+                    If FindRefRow(skus(i)) > 0 Then GoTo NextSub   ' reference dans le tableau entrepot : pas besoin des dimensions
                     BuildItems = "Dimensions manquantes : " & .ProdName & " / " & .SubName(k): Exit Function
                 End If
                 cnt = CLng(Round(.SubQty(k) * qtys(i), 0))
@@ -449,12 +583,13 @@ Private Function BuildItems(ByRef skus() As String, ByRef qtys() As Double, ByVa
                     items(n).Done = False: items(n).Placed = False
                     totVol = totVol + items(n).Vol
                 Next c
+NextSub:
             Next k
         End With
     Next i
-    If n = 0 Then BuildItems = "Aucun article": Exit Function
-    BuildOrders items, n
-    info = names & " | " & n & " colis | " & Format(totVol / 1000, "0.0") & " L | Saisonnier: " & IIf(seasonal, "Oui", "Non")
+    If n > 0 Then BuildOrders items, n
+    info = names & " | Saisonnier: " & IIf(seasonal, "Oui", "Non")
+    If n > 0 Then info = info & " | " & n & " colis geometriques, " & Format(totVol / 1000, "0.0") & " L"
     If Len(mForbidden) > 0 Then info = info & " | Caisses interdites: " & ForbiddenList()
     BuildItems = ""
 End Function
@@ -500,15 +635,281 @@ End Sub
 '                  SUGGESTION (All Seasons + Summer)
 ' =====================================================================
 
-Private Sub SuggestBoth(ByRef items() As TItem, ByVal n As Long, ByVal seasonal As Boolean, _
-                        ByVal mA As Double, ByVal mS As Double, ByRef resA As String, ByRef resS As String)
-    resA = Suggest(items, n, False, mA)
-    If seasonal Then
-        resS = Suggest(items, n, True, mS)
+Private Sub SuggestBoth(ByRef skus() As String, ByRef qtys() As Double, ByVal nLines As Long, _
+                        ByRef items() As TItem, ByVal n As Long, ByVal seasonal As Boolean, _
+                        ByVal mA As Double, ByVal mS As Double, ByRef resA As String, ByRef resS As String, ByRef info As String)
+    Dim uSku() As String, uQty() As Double, uRef() As Long, nU As Long, i As Long, k As Long, found As Long
+    Dim allRef As Boolean, noneRef As Boolean
+
+    mMargeA = mA: mMargeS = mS
+    ' regroupement des lignes par SKU
+    nU = 0
+    ReDim uSku(1 To nLines): ReDim uQty(1 To nLines): ReDim uRef(1 To nLines)
+    For i = 1 To nLines
+        found = 0
+        For k = 1 To nU
+            If NormKey(uSku(k)) = NormKey(skus(i)) Then found = k: Exit For
+        Next k
+        If found = 0 Then
+            nU = nU + 1: uSku(nU) = skus(i): uQty(nU) = qtys(i): uRef(nU) = FindRefRow(skus(i))
+        Else
+            uQty(found) = uQty(found) + qtys(i)
+        End If
+    Next i
+    allRef = True: noneRef = True
+    For k = 1 To nU
+        If uRef(k) > 0 Then noneRef = False Else allRef = False
+    Next k
+
+    If allRef And nU = 1 Then
+        ' cas simple : plages du referentiel
+        info = info & " | Referentiel: " & mRef(uRef(1)).Cat
+        resA = SuggestTable(uRef(1), CLng(Round(uQty(1), 0)), False)
+        If seasonal Then resS = SuggestTable(uRef(1), CLng(Round(uQty(1), 0)), True) Else resS = resA
+    ElseIf noneRef Then
+        ' hors referentiel : moteur geometrique
+        info = info & " | Hors referentiel (geometrie)"
+        resA = Suggest(items, n, False, mA) & NEW_TAG
+        If seasonal Then resS = Suggest(items, n, True, mS) & NEW_TAG Else resS = resA
     Else
-        resS = resA   ' produit non saisonnier : emballage All Seasons toute l'annee
+        ' commande mixte : fractions de capacite (referentiel, ou geometrie pour les articles hors tableau)
+        info = info & " | Commande mixte (fractions de capacite)"
+        resA = SuggestFraction(uSku, uQty, uRef, nU, False) & NEW_TAG
+        If seasonal Then resS = SuggestFraction(uSku, uQty, uRef, nU, True) & NEW_TAG Else resS = resA
     End If
 End Sub
+
+' Un seul article reference : plages min/MAX du referentiel, puis combinaison au-dela du MAX.
+Private Function SuggestTable(ByVal ri As Long, ByVal q As Long, ByVal summer As Boolean) As String
+    Dim counts() As Long, j As Long, best As Long, remaining As Long, guard As Long, anyBox As Boolean
+    ReDim counts(1 To mNCaisses)
+    anyBox = False
+    For j = 1 To mNCaisses
+        If mCaisses(j).IsSummer = summer And mRef(ri).MaxQ(j) >= 1 Then anyBox = True
+    Next j
+    If Not anyBox Then
+        SuggestTable = "Aucune caisse " & IIf(summer, "ete", "hiver") & " autorisee dans le referentiel pour " & mRef(ri).Cat
+        Exit Function
+    End If
+    remaining = q
+    Do While remaining > 0
+        guard = guard + 1
+        If guard > MAX_CAISSES Then SuggestTable = "Trop de caisses (> " & MAX_CAISSES & ")": Exit Function
+        ' 1) une caisse dont la plage contient la quantite restante (la plus petite en volume)
+        best = 0
+        For j = 1 To mNCaisses
+            If mCaisses(j).IsSummer = summer And mRef(ri).MaxQ(j) >= 1 Then
+                If remaining >= mRef(ri).MinQ(j) And remaining <= mRef(ri).MaxQ(j) Then
+                    If best = 0 Then
+                        best = j
+                    ElseIf CaisseVol(j) < CaisseVol(best) Then
+                        best = j
+                    End If
+                End If
+            End If
+        Next j
+        If best > 0 Then counts(best) = counts(best) + 1: Exit Do
+        ' 2) au-dela : la caisse de plus grand MAX inferieur a la quantite restante
+        best = 0
+        For j = 1 To mNCaisses
+            If mCaisses(j).IsSummer = summer And mRef(ri).MaxQ(j) >= 1 Then
+                If mRef(ri).MaxQ(j) < remaining Then
+                    If best = 0 Then
+                        best = j
+                    ElseIf mRef(ri).MaxQ(j) > mRef(ri).MaxQ(best) Then
+                        best = j
+                    ElseIf mRef(ri).MaxQ(j) = mRef(ri).MaxQ(best) And CaisseVol(j) < CaisseVol(best) Then
+                        best = j
+                    End If
+                End If
+            End If
+        Next j
+        If best > 0 Then
+            counts(best) = counts(best) + 1
+            remaining = remaining - mRef(ri).MaxQ(best)
+        Else
+            ' 3) quantite sous tous les minimums : la caisse de plus petit minimum qui peut la contenir
+            For j = 1 To mNCaisses
+                If mCaisses(j).IsSummer = summer And mRef(ri).MaxQ(j) >= remaining Then
+                    If best = 0 Then
+                        best = j
+                    ElseIf mRef(ri).MinQ(j) < mRef(ri).MinQ(best) Then
+                        best = j
+                    ElseIf mRef(ri).MinQ(j) = mRef(ri).MinQ(best) And CaisseVol(j) < CaisseVol(best) Then
+                        best = j
+                    End If
+                End If
+            Next j
+            If best = 0 Then SuggestTable = "Quantite non couverte par le referentiel pour " & mRef(ri).Cat: Exit Function
+            counts(best) = counts(best) + 1
+            Exit Do
+        End If
+    Loop
+    SuggestTable = FormatCounts(counts)
+End Function
+
+' Commande mixte : chaque article consomme q / capacite(caisse) ; une caisse convient si la somme <= 1.
+' Capacite = MAX du referentiel, ou maximum geometrique pour un article hors tableau.
+Private Function SuggestFraction(ByRef uSku() As String, ByRef uQty() As Double, ByRef uRef() As Long, ByVal nU As Long, ByVal summer As Boolean) As String
+    Dim cap() As Double, remQ() As Double, counts() As Long, take() As Double, bestTake() As Double, capMax() As Double
+    Dim i As Long, j As Long, best As Long, frac As Double, feasible As Boolean, guard As Long
+    Dim used As Double, placed As Double, bestPlaced As Double, pass As Long, pick As Long, bestRatio As Double, done() As Boolean
+    Dim margin As Double, t As Double
+
+    margin = IIf(summer, mMargeS, mMargeA)
+    ReDim cap(1 To nU, 1 To mNCaisses): ReDim remQ(1 To nU): ReDim counts(1 To mNCaisses)
+    ReDim take(1 To nU): ReDim bestTake(1 To nU): ReDim done(1 To nU)
+    For i = 1 To nU
+        remQ(i) = Round(uQty(i), 0)
+        For j = 1 To mNCaisses
+            cap(i, j) = 0
+            If mCaisses(j).IsSummer = summer Then
+                If uRef(i) > 0 Then
+                    If mRef(uRef(i)).MaxQ(j) >= 1 Then cap(i, j) = mRef(uRef(i)).MaxQ(j)
+                Else
+                    cap(i, j) = MaxInBoxGeo(uSku(i), j, margin)
+                End If
+            End If
+        Next j
+    Next i
+    ' article sans aucune caisse possible ? + plus grande capacite de chaque article
+    ReDim capMax(1 To nU)
+    For i = 1 To nU
+        capMax(i) = 0
+        For j = 1 To mNCaisses
+            If cap(i, j) > capMax(i) Then capMax(i) = cap(i, j)
+        Next j
+        If capMax(i) < 1 Then SuggestFraction = "Aucune caisse " & IIf(summer, "ete", "hiver") & " possible pour '" & Trim(uSku(i)) & "'": Exit Function
+    Next i
+
+    Do
+        guard = guard + 1
+        If guard > MAX_CAISSES Then SuggestFraction = "Trop de caisses (> " & MAX_CAISSES & ")": Exit Function
+        feasible = False
+        For i = 1 To nU
+            If remQ(i) > 0 Then feasible = True
+        Next i
+        If Not feasible Then Exit Do
+        ' 1) tout le reste dans une seule caisse ? (la plus petite en volume)
+        best = 0
+        For j = 1 To mNCaisses
+            If mCaisses(j).IsSummer = summer Then
+                feasible = True: frac = 0
+                For i = 1 To nU
+                    If remQ(i) > 0 Then
+                        If cap(i, j) < 1 Then feasible = False Else frac = frac + remQ(i) / cap(i, j)
+                    End If
+                Next i
+                If feasible And frac <= 1 + EPS Then
+                    If best = 0 Then
+                        best = j
+                    ElseIf CaisseVol(j) < CaisseVol(best) Then
+                        best = j
+                    End If
+                End If
+            End If
+        Next j
+        If best > 0 Then counts(best) = counts(best) + 1: Exit Do
+        ' 2) sinon : la caisse qui fait le plus avancer la commande. Progres = somme des articles places
+        '    rapportes a leur plus grande capacite (toutes caisses de la saison), pour ne pas favoriser
+        '    une petite caisse remplie a 100 % avec 1 article face a une grande qui en prend 70.
+        best = 0: bestPlaced = 0
+        For j = 1 To mNCaisses
+            If mCaisses(j).IsSummer = summer Then
+                used = 0: placed = 0
+                For i = 1 To nU: take(i) = 0: done(i) = False: Next i
+                For pass = 1 To nU
+                    pick = 0: bestRatio = -1
+                    For i = 1 To nU
+                        If Not done(i) And remQ(i) > 0 And cap(i, j) >= 1 Then
+                            If remQ(i) / cap(i, j) > bestRatio Then bestRatio = remQ(i) / cap(i, j): pick = i
+                        End If
+                    Next i
+                    If pick = 0 Then Exit For
+                    done(pick) = True
+                    t = Int((1 - used) * cap(pick, j) + EPS)
+                    If t > remQ(pick) Then t = remQ(pick)
+                    If t > 0 Then
+                        take(pick) = t: used = used + t / cap(pick, j): placed = placed + t / capMax(pick)
+                    End If
+                Next pass
+                feasible = False
+                If placed > bestPlaced + EPS Then
+                    feasible = True
+                ElseIf best > 0 And placed > EPS Then
+                    If Abs(placed - bestPlaced) <= EPS Then
+                        If CaisseVol(j) < CaisseVol(best) Then feasible = True
+                    End If
+                End If
+                If feasible Then
+                    best = j: bestPlaced = placed
+                    For i = 1 To nU: bestTake(i) = take(i): Next i
+                End If
+            End If
+        Next j
+        If best = 0 Or bestPlaced <= EPS Then SuggestFraction = "Combinaison impossible (capacites du referentiel)": Exit Function
+        counts(best) = counts(best) + 1
+        For i = 1 To nU: remQ(i) = remQ(i) - bestTake(i): Next i
+    Loop
+    SuggestFraction = FormatCounts(counts)
+End Function
+
+' Capacite geometrique d'un article seul dans une caisse (recherche binaire bornee par le volume).
+Private Function MaxInBoxGeo(ByVal sku As String, ByVal j As Long, ByVal margin As Double) As Long
+    Dim items() As TItem, n As Long, seasonal As Boolean, info As String, errMsg As String
+    Dim skus() As String, qtys() As Double
+    Dim ul As Double, uw As Double, uh As Double, unitVol As Double, lo As Long, hi As Long, md As Long, pv As Double, i As Long
+    Dim savedForb As String
+
+    MaxInBoxGeo = 0
+    savedForb = mForbidden
+    ul = mCaisses(j).L - mClearance: uw = mCaisses(j).W - mClearance: uh = mCaisses(j).H * (1 - margin) - mClearance
+    If ul <= 0 Or uw <= 0 Or uh <= 0 Then GoTo Done
+    ReDim skus(1 To 1): ReDim qtys(1 To 1)
+    skus(1) = sku: qtys(1) = 1
+    errMsg = BuildItems(skus, qtys, 1, items, n, seasonal, info)
+    If Len(errMsg) > 0 Or n = 0 Then GoTo Done
+    If IsForbidden(mCaisses(j).CaisseName) Then GoTo Done
+    unitVol = 0
+    For i = 1 To n: unitVol = unitVol + items(i).Vol: Next i
+    hi = Int(ul * uw * uh / unitVol)
+    If hi < 1 Then GoTo Done
+    If Not GeoFits(sku, 1, ul, uw, uh) Then GoTo Done
+    lo = 1
+    Do While lo < hi
+        md = (lo + hi + 1) \ 2
+        If GeoFits(sku, md, ul, uw, uh) Then lo = md Else hi = md - 1
+    Loop
+    MaxInBoxGeo = lo
+Done:
+    mForbidden = savedForb
+End Function
+
+Private Function GeoFits(ByVal sku As String, ByVal q As Long, ByVal ul As Double, ByVal uw As Double, ByVal uh As Double) As Boolean
+    Dim items() As TItem, n As Long, seasonal As Boolean, info As String, errMsg As String, pv As Double, i As Long
+    Dim skus() As String, qtys() As Double
+    ReDim skus(1 To 1): ReDim qtys(1 To 1)
+    skus(1) = sku: qtys(1) = q
+    errMsg = BuildItems(skus, qtys, 1, items, n, seasonal, info)
+    If Len(errMsg) > 0 Or n = 0 Then GeoFits = False: Exit Function
+    For i = 1 To n: items(i).Done = False: Next i
+    GeoFits = PackBest(items, n, ul, uw, uh, pv)
+End Function
+
+Private Function CaisseVol(ByVal j As Long) As Double
+    CaisseVol = mCaisses(j).L * mCaisses(j).W * mCaisses(j).H
+End Function
+
+Private Function FormatCounts(ByRef counts() As Long) As String
+    Dim j As Long, res As String
+    For j = 1 To mNCaisses
+        If counts(j) > 0 Then
+            If Len(res) > 0 Then res = res & "_"
+            res = res & counts(j) & ":" & mCaisses(j).CaisseName
+        End If
+    Next j
+    FormatCounts = res
+End Function
 
 ' Retourne la combinaison de caisses ("1:Caisse V2_1:Caisse V5") ou un message d'erreur.
 Private Function Suggest(ByRef items() As TItem, ByVal n As Long, ByVal summer As Boolean, ByVal margin As Double) As String

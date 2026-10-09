@@ -19,7 +19,18 @@ Livrable principal : **`packaging_engine_mms_v2.xlsm`** (classeur d'origine + 2 
 
 `Item` / `ProduitN` = SKU (ex. `9004`) ou, à défaut, le nom exact du produit (un produit composé de la liste est accepté comme n'importe quel autre).
 
-## Règles implémentées
+## Moteur principal : Référentiel Entrepôt (depuis le 09/10/2026)
+
+La feuille `Référentiel Entrepôt` est la source de vérité : une ligne par catégorie (colonne `SKU candidats`, séparés par `|`), et pour chaque caisse une plage **min / MAX** d'articles (`X` = caisse interdite).
+
+1. **Article référencé, seul** : la caisse dont la plage contient la quantité (la plus petite en volume si plusieurs). Au-delà du plus grand MAX : la caisse de plus grand MAX, puis le reste de la même façon (combinaison, ex. 200 ballotins → `1:Caisse V2_1:Caisse V5`). Résultat sans suffixe.
+2. **Commande mixte** (plusieurs articles) : chaque article consomme `quantité / MAX` de la caisse ; une caisse convient si la somme ≤ 1. Sinon, on choisit la caisse qui fait le plus avancer la commande et on recommence. Suffixe ` (New)`.
+3. **Article hors référentiel** : moteur géométrique ci-dessous (ou capacité géométrique dans une commande mixte). Suffixe ` (New)`.
+4. Saison : colonnes hiver pour All Seasons, colonnes été pour Summer ; un produit `Par Saison? = Non` garde l'emballage All Seasons toute l'année.
+
+Tests : `python3 tools/test_table_engine.py packaging_engine_mms_v2.xlsm` (résultat dans `tests/resultats_moteur_referentiel.md`).
+
+## Règles du moteur géométrique (articles hors référentiel)
 
 - Hauteur utilisable d'une caisse = `Hauteur × (1 − marge)` (la marge vide est en haut), puis le jeu de sécurité (cm) est retranché des trois dimensions utiles.
 - Placement 3D sans débordement (heuristique « espaces maximaux », plusieurs stratégies essayées, la meilleure retenue). Orientations : 2 (rotation à plat) si `Couchable? = Non`, 6 si `Oui`. Valeur par défaut quand la cellule est vide : constante `DEFAULT_TIP_OVER` du module (`False`).
@@ -29,7 +40,7 @@ Livrable principal : **`packaging_engine_mms_v2.xlsm`** (classeur d'origine + 2 
 - Format du résultat : `1:Caisse Super Small_2:Caisse V2_1:Caisse V3`.
 - Erreurs écrites dans les cellules résultat : produit inconnu, dimensions manquantes, article trop grand pour toutes les caisses.
 
-## Base de comparaison entrepôt
+## Outils de comparaison (moteur géométrique)
 
 - Feuille `Référentiel Entrepôt` du classeur (source : tableaux EMBALLAGE HIVER / ETE de l'entrepôt) : par catégorie d'article et par caisse, le nombre **max** d'articles (« jusqu'à »), `X` = caisse non autorisée. Les SKU candidats (le premier sert au calcul) sont modifiables.
 - `tests/referentiel_entrepot.csv` : même contenu, utilisé pour construire la feuille.

@@ -40,23 +40,6 @@ if not any(h.lower().startswith("couchable") for h in hdrs):
     cmt = wsP.cell(1, col)
     cmt.comment = Comment("Oui = l'article peut être couché sur n'importe quelle face dans la caisse. Non (défaut) = il reste debout, seule la rotation à plat est permise (ex. sachets souples).", "Packaging Engine")
 
-# ---------- Produits : colonne Caisses interdites ----------
-hdrs = [str(c.value or "") for c in wsP[1]]
-if not any(h.lower().startswith("caisses interdites") for h in hdrs):
-    col = wsP.max_column + 1
-    ref = wsP.cell(1, 1)
-    h = wsP.cell(1, col, "Caisses interdites")
-    h.font = copy(ref.font); h.fill = copy(ref.fill); h.border = copy(ref.border); h.alignment = copy(ref.alignment)
-    h.comment = Comment("Noms exacts de la feuille Caisses, séparés par « ; » (ex. Caisse Super Small;Caisse V2). Ces caisses sont exclues pour toute commande contenant ce produit. Vide = aucune restriction.", "Packaging Engine")
-    for r in range(2, wsP.max_row + 1):
-        if wsP.cell(r, 1).value is not None:
-            c = wsP.cell(r, col); c.font = copy(wsP.cell(r, 4).font); c.border = copy(wsP.cell(r, 4).border); c.fill = inp_fill
-            if str(wsP.cell(r, 1).value).strip() == "9004":
-                c.value = "Caisse Super Small"   # barème entrepôt : 1 sachet -> V2
-    wsP.column_dimensions[get_column_letter(col)].width = 22
-    if wsP.auto_filter.ref:
-        wsP.auto_filter.ref = f"A1:{get_column_letter(col)}{wsP.max_row}"
-
 # ---------- Packaging Calculator ----------
 if "Packaging Calculator" in wb.sheetnames: del wb["Packaging Calculator"]
 ws = wb.create_sheet("Packaging Calculator")
@@ -79,7 +62,7 @@ for i, (sku, q) in enumerate(examples, start=5):
     ws.cell(i, 1, sku).font = normal; ws.cell(i, 2, q).font = normal
     for c in range(1, 6): ws.cell(i, c).border = box
 ws["E1"] = "Mode d'emploi : SKU (ou nom exact du produit) en colonne A, quantité en B, puis bouton « Remplir »."
-ws["E2"] = "C, D, E sont remplies par la macro (format qté:caisse, séparateur « _ »)."
+ws["E2"] = "Résultat issu des plages du Référentiel Entrepôt ; suffixe « (New) » = commande mixte ou article hors référentiel (calcul par capacités / géométrie)."
 ws["E1"].font = Font(name="Arial", italic=True, color="666666"); ws["E2"].font = Font(name="Arial", italic=True, color="666666")
 ws.column_dimensions["A"].width = 24; ws.column_dimensions["B"].width = 11
 ws.column_dimensions["C"].width = 36; ws.column_dimensions["D"].width = 36; ws.column_dimensions["E"].width = 60
@@ -117,58 +100,9 @@ ws.column_dimensions["K"].width = 36; ws.column_dimensions["L"].width = 36; ws.c
 ws.column_dimensions["N"].width = 16
 ws.freeze_panes = "A2"
 
-# ---------- Référentiel Entrepôt (base de comparaison) ----------
-import csv, os
-ref_csv = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tests", "referentiel_entrepot.csv")
-if os.path.exists(ref_csv):
-    if "Référentiel Entrepôt" in wb.sheetnames: del wb["Référentiel Entrepôt"]
-    ws = wb.create_sheet("Référentiel Entrepôt")
-    rows = list(csv.DictReader(open(ref_csv, encoding="utf-8"), delimiter=";"))
-    boxes = [k for k in rows[0].keys() if k not in ("categorie", "sku_candidats", "couchable")]
-    grey = PatternFill("solid", fgColor="BFBFBF")
-    # applique aux SKU candidats : Couchable? (si 'Oui' dans le CSV) et Caisses interdites (cases X), sans ecraser une valeur saisie
-    hp = [str(c.value or "") for c in wsP[1]]
-    cCouch = next(i for i, h in enumerate(hp, start=1) if h.lower().startswith("couchable"))
-    cForb = next(i for i, h in enumerate(hp, start=1) if h.lower().startswith("caisses interdites"))
-    rowsku = {str(wsP.cell(r, 1).value).strip(): r for r in range(2, wsP.max_row + 1) if wsP.cell(r, 1).value is not None}
-    for r in rows:
-        xboxes = [b for b in boxes if r[b].strip().upper() == "X"]
-        for sku in [x.strip() for x in r["sku_candidats"].split("|") if x.strip()]:
-            if sku not in rowsku: continue
-            pr = rowsku[sku]
-            if r.get("couchable", "").strip().lower() == "oui":
-                wsP.cell(pr, cCouch).value = "Oui"
-            if xboxes and not wsP.cell(pr, cForb).value:
-                wsP.cell(pr, cForb).value = ";".join(xboxes)
-    skuname = {str(wsP.cell(r, 1).value).strip(): wsP.cell(r, 3).value for r in range(2, wsP.max_row + 1) if wsP.cell(r, 1).value is not None}
-    hdr = ["Catégorie entrepôt", "SKU candidats (séparés par |)", "Produit (1er SKU)"] + boxes + ["Couchable retenu", "Commentaire"]
-    for c, h in enumerate(hdr, start=1): ws.cell(1, c, h)
-    style_hdr(ws, [f"{get_column_letter(c)}1" for c in range(1, len(hdr) + 1)])
-    for i, r in enumerate(rows, start=2):
-        ws.cell(i, 1, r["categorie"]).font = bold
-        ws.cell(i, 2, r["sku_candidats"]).fill = inp_fill
-        first = r["sku_candidats"].split("|")[0]
-        ws.cell(i, 3, skuname.get(first, "(à identifier)"))
-        for j, b in enumerate(boxes, start=4):
-            v = r[b].strip()
-            cell = ws.cell(i, j)
-            if v == "X":
-                cell.value = "X"; cell.fill = grey
-            elif v:
-                cell.value = int(v) if v.isdigit() else v
-            cell.alignment = Alignment(horizontal="center")
-            if v != "X": cell.fill = inp_fill
-        ws.cell(i, 4 + len(boxes), r.get("couchable", "Non"))
-        for c in range(1, len(hdr) + 1): ws.cell(i, c).border = box
-    n = len(rows) + 3
-    ws.cell(n, 1, "Lecture : nombre MAX d'articles de la catégorie que la caisse peut contenir (« jusqu'à »). X (gris) = caisse non autorisée pour cet article.")
-    ws.cell(n + 1, 1, "Cellules jaunes modifiables : SKU candidats (le 1er sert au calcul) et quantités. « >5 & <12 » = caisse utilisable seulement de 6 à 12 articles. Comparaison : tools/compare_entrepot.py ; recherche de réglages : tools/search_config.py.")
-    ws.cell(n, 1).font = Font(name="Arial", italic=True, color="666666"); ws.cell(n + 1, 1).font = Font(name="Arial", italic=True, color="666666")
-    ws.column_dimensions["A"].width = 20; ws.column_dimensions["B"].width = 42; ws.column_dimensions["C"].width = 30
-    for j in range(4, 4 + len(boxes)): ws.column_dimensions[get_column_letter(j)].width = 13
-    ws.column_dimensions[get_column_letter(4 + len(boxes))].width = 16
-    ws.column_dimensions[get_column_letter(5 + len(boxes))].width = 40
-    ws.freeze_panes = "D2"
+# ---------- Référentiel Entrepôt : conservé tel quel depuis le classeur source (plages min / MAX par caisse) ----------
+if "Référentiel Entrepôt" not in wb.sheetnames:
+    print("ATTENTION : pas de feuille 'Référentiel Entrepôt' dans la source ; seul le moteur géométrique sera utilisé.")
 
 # police Arial sur les nouvelles feuilles (cellules non stylées)
 for name in ("Packaging Calculator", "Mixed Pack Helper", "Référentiel Entrepôt"):
