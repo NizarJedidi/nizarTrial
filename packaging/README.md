@@ -35,7 +35,7 @@ Livrable principal : **`packaging_engine_mms_v2.xlsm`** (classeur d'origine + 2 
 - `tests/referentiel_entrepot.csv` : même contenu, utilisé pour construire la feuille.
 - `tools/compare_entrepot.py <classeur> [marge_all] [marge_ete] [jeu]` : calcule pour chaque case le max que l'algorithme place dans la caisse et l'affiche en « entrepôt / algorithme ». Dernier résultat : `tests/comparaison_entrepot.md`.
 - `tools/search_config.py <classeur> [sortie.md]` : grille de réglages (marge hiver, marge été, jeu ; `Couchable?` choisi par catégorie) et score = cases exactement reproduites. Grilles modifiables par variables d'environnement `SC_GRID_A`, `SC_GRID_S`, `SC_GRID_J`. Dernier résultat : `tests/recherche_reglages.md`.
-- Réglages retenus (09/10/2026) : marge All 5 %, marge Été 30 %, jeu 0,5 cm ; `Couchable? = Oui` pour Fun Machine et Distributeur 3 en 1 ; les cases X du référentiel sont recopiées dans `Caisses interdites` des SKU candidats lors de la construction du classeur.
+- Réglages retenus (09/10/2026) : marge All 5 %, marge Été 27 % (reproduit le barème BULK 1.5 été : 1 / 3 / 4), jeu 0,5 cm ; `Couchable? = Oui` pour Fun Machine et Distributeur 3 en 1 ; les cases X du référentiel sont recopiées dans `Caisses interdites` des SKU candidats lors de la construction du classeur.
 
 ## Fichiers
 

@@ -61,7 +61,7 @@ if not any(h.lower().startswith("caisses interdites") for h in hdrs):
 if "Packaging Calculator" in wb.sheetnames: del wb["Packaging Calculator"]
 ws = wb.create_sheet("Packaging Calculator")
 ws["A1"] = "Marge vide All Seasons"; ws["B1"] = 0.05
-ws["A2"] = "Marge vide Summer";      ws["B2"] = 0.30
+ws["A2"] = "Marge vide Summer";      ws["B2"] = 0.27
 ws["A3"] = "Jeu de sécurité (cm)";   ws["B3"] = 0.5
 for c in ("A1", "A2", "A3"): ws[c].font = bold
 for c in ("B1", "B2", "B3"):
