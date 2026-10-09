@@ -29,6 +29,12 @@ Livrable principal : **`packaging_engine_mms_v2.xlsm`** (classeur d'origine + 2 
 - Format du résultat : `1:Caisse Super Small_2:Caisse V2_1:Caisse V3`.
 - Erreurs écrites dans les cellules résultat : produit inconnu, dimensions manquantes, article trop grand pour toutes les caisses.
 
+## Base de comparaison entrepôt
+
+- Feuille `Référentiel Entrepôt` du classeur (source : tableaux EMBALLAGE HIVER / ETE de l'entrepôt) : par catégorie d'article et par caisse, le nombre **max** d'articles (« jusqu'à »), `X` = caisse non autorisée. Les SKU candidats (le premier sert au calcul) sont modifiables.
+- `tests/referentiel_entrepot.csv` : même contenu, utilisé pour construire la feuille.
+- `tools/compare_entrepot.py <classeur> [marge_all] [marge_ete] [jeu]` : calcule pour chaque case le max que l'algorithme place dans la caisse et l'affiche en « entrepôt / algorithme ». Dernier résultat : `tests/comparaison_entrepot.md`.
+
 ## Fichiers
 
 - `packaging_engine_mms_v2.xlsm` – le classeur livré.

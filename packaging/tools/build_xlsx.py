@@ -117,8 +117,46 @@ ws.column_dimensions["K"].width = 36; ws.column_dimensions["L"].width = 36; ws.c
 ws.column_dimensions["N"].width = 16
 ws.freeze_panes = "A2"
 
+# ---------- Référentiel Entrepôt (base de comparaison) ----------
+import csv, os
+ref_csv = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tests", "referentiel_entrepot.csv")
+if os.path.exists(ref_csv):
+    if "Référentiel Entrepôt" in wb.sheetnames: del wb["Référentiel Entrepôt"]
+    ws = wb.create_sheet("Référentiel Entrepôt")
+    rows = list(csv.DictReader(open(ref_csv, encoding="utf-8"), delimiter=";"))
+    boxes = [k for k in rows[0].keys() if k not in ("categorie", "sku_candidats")]
+    grey = PatternFill("solid", fgColor="BFBFBF")
+    skuname = {str(wsP.cell(r, 1).value).strip(): wsP.cell(r, 3).value for r in range(2, wsP.max_row + 1) if wsP.cell(r, 1).value is not None}
+    hdr = ["Catégorie entrepôt", "SKU candidats (séparés par |)", "Produit (1er SKU)"] + boxes + ["Commentaire"]
+    for c, h in enumerate(hdr, start=1): ws.cell(1, c, h)
+    style_hdr(ws, [f"{get_column_letter(c)}1" for c in range(1, len(hdr) + 1)])
+    for i, r in enumerate(rows, start=2):
+        ws.cell(i, 1, r["categorie"]).font = bold
+        ws.cell(i, 2, r["sku_candidats"]).fill = inp_fill
+        first = r["sku_candidats"].split("|")[0]
+        ws.cell(i, 3, skuname.get(first, "(à identifier)"))
+        for j, b in enumerate(boxes, start=4):
+            v = r[b].strip()
+            cell = ws.cell(i, j)
+            if v == "X":
+                cell.value = "X"; cell.fill = grey
+            elif v:
+                cell.value = int(v)
+            cell.alignment = Alignment(horizontal="center")
+            if v != "X": cell.fill = inp_fill
+        for c in range(1, len(hdr) + 1): ws.cell(i, c).border = box
+    n = len(rows) + 3
+    ws.cell(n, 1, "Lecture : nombre MAX d'articles de la catégorie que la caisse peut contenir (« jusqu'à »). X (gris) = caisse non autorisée pour cet article.")
+    ws.cell(n + 1, 1, "Cellules jaunes modifiables : SKU candidats (le 1er sert au calcul) et quantités. Comparaison : python3 tools/compare_entrepot.py <classeur> (lit cette feuille).")
+    ws.cell(n, 1).font = Font(name="Arial", italic=True, color="666666"); ws.cell(n + 1, 1).font = Font(name="Arial", italic=True, color="666666")
+    ws.column_dimensions["A"].width = 20; ws.column_dimensions["B"].width = 42; ws.column_dimensions["C"].width = 30
+    for j in range(4, 4 + len(boxes)): ws.column_dimensions[get_column_letter(j)].width = 13
+    ws.column_dimensions[get_column_letter(4 + len(boxes))].width = 40
+    ws.freeze_panes = "D2"
+
 # police Arial sur les nouvelles feuilles (cellules non stylées)
-for name in ("Packaging Calculator", "Mixed Pack Helper"):
+for name in ("Packaging Calculator", "Mixed Pack Helper", "Référentiel Entrepôt"):
+    if name not in wb.sheetnames: continue
     for row in wb[name].iter_rows():
         for c in row:
             if c.value is not None and c.font.name != "Arial":
