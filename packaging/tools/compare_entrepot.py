@@ -26,7 +26,11 @@ def read_ref(wb):
             d = {"categorie": str(r[0]), "sku_candidats": str(r[1] or "")}
             for i, h in enumerate(hdr):
                 if h and h.startswith(("Caisse", "ETE")):
-                    v = r[i]; d[h] = "" if v is None else ("X" if str(v).strip().upper() == "X" else str(int(v)))
+                    v = r[i]
+                    if v is None: d[h] = ""
+                    elif str(v).strip().upper() == "X": d[h] = "X"
+                    else:
+                        import re as _re; nums = _re.findall(r"\d+", str(v)); d[h] = nums[-1] if nums else ""
             rows.append(d)
         return rows
     ref = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tests", "referentiel_entrepot.csv")
@@ -50,7 +54,7 @@ def max_in_box(sku, c, margin):
     return best
 
 rows = read_ref(wb)
-boxes = [k for k in rows[0].keys() if k not in ("categorie", "sku_candidats")]
+boxes = [k for k in rows[0].keys() if k not in ("categorie", "sku_candidats", "couchable")]
 print(f"Réglages : marge All Seasons {mA:.0%}, marge Summer {mS:.0%}, jeu {cl} cm. Format : entrepôt / algorithme (X = interdite).")
 print()
 print("| Catégorie | SKU testé | " + " | ".join(b.replace("Caisse ", "") for b in boxes) + " |")

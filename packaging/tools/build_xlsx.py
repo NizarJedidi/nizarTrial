@@ -61,7 +61,7 @@ if not any(h.lower().startswith("caisses interdites") for h in hdrs):
 if "Packaging Calculator" in wb.sheetnames: del wb["Packaging Calculator"]
 ws = wb.create_sheet("Packaging Calculator")
 ws["A1"] = "Marge vide All Seasons"; ws["B1"] = 0.05
-ws["A2"] = "Marge vide Summer";      ws["B2"] = 0.20
+ws["A2"] = "Marge vide Summer";      ws["B2"] = 0.30
 ws["A3"] = "Jeu de sécurité (cm)";   ws["B3"] = 0.5
 for c in ("A1", "A2", "A3"): ws[c].font = bold
 for c in ("B1", "B2", "B3"):
@@ -124,10 +124,24 @@ if os.path.exists(ref_csv):
     if "Référentiel Entrepôt" in wb.sheetnames: del wb["Référentiel Entrepôt"]
     ws = wb.create_sheet("Référentiel Entrepôt")
     rows = list(csv.DictReader(open(ref_csv, encoding="utf-8"), delimiter=";"))
-    boxes = [k for k in rows[0].keys() if k not in ("categorie", "sku_candidats")]
+    boxes = [k for k in rows[0].keys() if k not in ("categorie", "sku_candidats", "couchable")]
     grey = PatternFill("solid", fgColor="BFBFBF")
+    # applique aux SKU candidats : Couchable? (si 'Oui' dans le CSV) et Caisses interdites (cases X), sans ecraser une valeur saisie
+    hp = [str(c.value or "") for c in wsP[1]]
+    cCouch = next(i for i, h in enumerate(hp, start=1) if h.lower().startswith("couchable"))
+    cForb = next(i for i, h in enumerate(hp, start=1) if h.lower().startswith("caisses interdites"))
+    rowsku = {str(wsP.cell(r, 1).value).strip(): r for r in range(2, wsP.max_row + 1) if wsP.cell(r, 1).value is not None}
+    for r in rows:
+        xboxes = [b for b in boxes if r[b].strip().upper() == "X"]
+        for sku in [x.strip() for x in r["sku_candidats"].split("|") if x.strip()]:
+            if sku not in rowsku: continue
+            pr = rowsku[sku]
+            if r.get("couchable", "").strip().lower() == "oui":
+                wsP.cell(pr, cCouch).value = "Oui"
+            if xboxes and not wsP.cell(pr, cForb).value:
+                wsP.cell(pr, cForb).value = ";".join(xboxes)
     skuname = {str(wsP.cell(r, 1).value).strip(): wsP.cell(r, 3).value for r in range(2, wsP.max_row + 1) if wsP.cell(r, 1).value is not None}
-    hdr = ["Catégorie entrepôt", "SKU candidats (séparés par |)", "Produit (1er SKU)"] + boxes + ["Commentaire"]
+    hdr = ["Catégorie entrepôt", "SKU candidats (séparés par |)", "Produit (1er SKU)"] + boxes + ["Couchable retenu", "Commentaire"]
     for c, h in enumerate(hdr, start=1): ws.cell(1, c, h)
     style_hdr(ws, [f"{get_column_letter(c)}1" for c in range(1, len(hdr) + 1)])
     for i, r in enumerate(rows, start=2):
@@ -141,17 +155,19 @@ if os.path.exists(ref_csv):
             if v == "X":
                 cell.value = "X"; cell.fill = grey
             elif v:
-                cell.value = int(v)
+                cell.value = int(v) if v.isdigit() else v
             cell.alignment = Alignment(horizontal="center")
             if v != "X": cell.fill = inp_fill
+        ws.cell(i, 4 + len(boxes), r.get("couchable", "Non"))
         for c in range(1, len(hdr) + 1): ws.cell(i, c).border = box
     n = len(rows) + 3
     ws.cell(n, 1, "Lecture : nombre MAX d'articles de la catégorie que la caisse peut contenir (« jusqu'à »). X (gris) = caisse non autorisée pour cet article.")
-    ws.cell(n + 1, 1, "Cellules jaunes modifiables : SKU candidats (le 1er sert au calcul) et quantités. Comparaison : python3 tools/compare_entrepot.py <classeur> (lit cette feuille).")
+    ws.cell(n + 1, 1, "Cellules jaunes modifiables : SKU candidats (le 1er sert au calcul) et quantités. « >5 & <12 » = caisse utilisable seulement de 6 à 12 articles. Comparaison : tools/compare_entrepot.py ; recherche de réglages : tools/search_config.py.")
     ws.cell(n, 1).font = Font(name="Arial", italic=True, color="666666"); ws.cell(n + 1, 1).font = Font(name="Arial", italic=True, color="666666")
     ws.column_dimensions["A"].width = 20; ws.column_dimensions["B"].width = 42; ws.column_dimensions["C"].width = 30
     for j in range(4, 4 + len(boxes)): ws.column_dimensions[get_column_letter(j)].width = 13
-    ws.column_dimensions[get_column_letter(4 + len(boxes))].width = 40
+    ws.column_dimensions[get_column_letter(4 + len(boxes))].width = 16
+    ws.column_dimensions[get_column_letter(5 + len(boxes))].width = 40
     ws.freeze_panes = "D2"
 
 # police Arial sur les nouvelles feuilles (cellules non stylées)

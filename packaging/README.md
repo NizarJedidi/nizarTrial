@@ -34,6 +34,8 @@ Livrable principal : **`packaging_engine_mms_v2.xlsm`** (classeur d'origine + 2 
 - Feuille `Référentiel Entrepôt` du classeur (source : tableaux EMBALLAGE HIVER / ETE de l'entrepôt) : par catégorie d'article et par caisse, le nombre **max** d'articles (« jusqu'à »), `X` = caisse non autorisée. Les SKU candidats (le premier sert au calcul) sont modifiables.
 - `tests/referentiel_entrepot.csv` : même contenu, utilisé pour construire la feuille.
 - `tools/compare_entrepot.py <classeur> [marge_all] [marge_ete] [jeu]` : calcule pour chaque case le max que l'algorithme place dans la caisse et l'affiche en « entrepôt / algorithme ». Dernier résultat : `tests/comparaison_entrepot.md`.
+- `tools/search_config.py <classeur> [sortie.md]` : grille de réglages (marge hiver, marge été, jeu ; `Couchable?` choisi par catégorie) et score = cases exactement reproduites. Grilles modifiables par variables d'environnement `SC_GRID_A`, `SC_GRID_S`, `SC_GRID_J`. Dernier résultat : `tests/recherche_reglages.md`.
+- Réglages retenus (09/10/2026) : marge All 5 %, marge Été 30 %, jeu 0,5 cm ; `Couchable? = Oui` pour Fun Machine et Distributeur 3 en 1 ; les cases X du référentiel sont recopiées dans `Caisses interdites` des SKU candidats lors de la construction du classeur.
 
 ## Fichiers
 
@@ -43,12 +45,12 @@ Livrable principal : **`packaging_engine_mms_v2.xlsm`** (classeur d'origine + 2 
 - `tools/make_vbaproject.py` – génère `vbaProject.bin` (format MS-OVBA) à partir du `.bas`, sans Excel.
 - `tools/finalize_xlsm.py` – assemble le `.xlsm` (VBA + boutons de formulaire).
 - `tools/packer_prototype.py` – prototype Python de l'algorithme (même logique que le VBA), utile pour tester : `python3 tools/packer_prototype.py source/packaging_engine_mms_v1.xlsx`.
-- `source/packaging_engine_mms_v1.xlsx` – classeur d'origine.
+- `source/packaging_engine_mms_source.xlsx` – feuilles Produits / Caisses de référence (version utilisateur du 09/10/2026).
 
 Regénérer le classeur :
 
 ```bash
-python3 tools/build_xlsx.py source/packaging_engine_mms_v1.xlsx /tmp/v2.xlsx
+python3 tools/build_xlsx.py source/packaging_engine_mms_source.xlsx /tmp/v2.xlsx
 python3 tools/make_vbaproject.py /tmp/vbaProject.bin vba/modPackaging.bas
 python3 tools/finalize_xlsm.py /tmp/v2.xlsx /tmp/vbaProject.bin packaging_engine_mms_v2.xlsm
 ```
